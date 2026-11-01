@@ -3,7 +3,8 @@
 Agents add tasks here under their owner. Format: `- [ ] ID: task (owner) — status/notes`
 
 ## Now (this week)
-- [ ] CPO-1: Verify live Stripe App Marketplace e-invoicing apps (cpo). Note: marketplace.stripe.com must be allowed in the session's network settings
+- [x] CPO-1: Verify live Stripe Marketplace: FAILED gate, 3+ German, 4+ French and several Peppol/KSeF apps exist (see docs/01)
+- [ ] CEO-1: Re-scope: run a gap scan across other platforms, or pick a new idea (ceo + cpo)
 - [ ] STD-1: Verify DE/FR/BE/PL dates against official sources (einvoice-standards-expert)
 - [ ] CTO-1: ADR-001 stack + repo structure (cto)
 - [ ] BE-1: einvoice-core: Stripe invoice → CII XML + UBL XML with tests (backend-engineer)

@@ -19,6 +19,19 @@ switch. That is a desperate, paying, under-served buyer with a built-in distribu
 > Caveat: `marketplace.stripe.com` was not reachable from this session, so the listing check is
 > based on Stripe's own docs and search results. Verify the live Marketplace before launch (task CPO-1).
 
+
+## UPDATE 2026-11-01: live Stripe App Marketplace check (CPO-1) ❌ the gap is closed
+
+The live Marketplace shows **331 results for "e-invoicing"** and many dedicated apps:
+- **Germany (ZUGFeRD/XRechnung):** E-Invoice – E-Rechnung; Exportly E-Rechnung; E-Rechnung E-Invoice MiracleBill
+- **France (Factur-X / reform):** FactPulse (via certified PA), Konformy, WeInvoice, Pennylane E-Invoicing
+- **Peppol:** Billit, SendPol, Peppost
+- **Poland KSeF:** KSeF e-Invoicing for Poland, S2K
+- **Multi-country:** Invopop, DDD Invoices, Quaderno
+- **Others:** Romania (Storno, RO E-Factura, FiscalLink, Normbeleg), Spain (VeriFactu/TicketBAI), Croatia (Typka), Italy (A-Cube)
+
+**Conclusion:** the Stripe wedge fails our evidence gate. The scope must change before we build anything.
+
 ## Landscape by channel
 
 ### Free online validators / generators (saturated — use only as an SEO lead magnet)
