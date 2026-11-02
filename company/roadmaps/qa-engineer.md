@@ -1,29 +1,27 @@
-# Roadmap — QA & Test Automation Lead
+# Roadmap: QA & Test Automation Lead
 
 Owner agent: `qa-engineer` · Reports to: Chief Technology Officer
 
-Status key: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
+Status: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
 
 ## Mission
-Nothing invalid ever reaches a customer.
+Nothing wrong reaches a user.
 
 ## KPIs
 - Escaped defects: _baseline TBD_
-- Fixture coverage of BR rules: _baseline TBD_
+- Corpus size: _baseline TBD_
 
-## Q4 2026
-- ⬜ 50 fixtures
-- ⬜ CI validation job
+## Nov 2026
+- ⬜ Corpus list + golden tests
+
+## Dec 2026
+- ⬜ Launch test pass
 
 ## Q1 2027
-- ⬜ Release checklist
-- ⬜ Fuzz tests
+- ⬜ Regression suite in CI
 
 ## Q2 2027
-- ⬜ FR fixtures
-
-## H2 2027
-- ⬜ Peppol fixtures
+- ⬜ Node.js corpus
 
 ## Idea backlog
-- Fuzz-test with randomly generated Stripe invoices to find edge cases before customers do.
+- Golden-file tests from real plugin versions so every engine change is checked against known answers.

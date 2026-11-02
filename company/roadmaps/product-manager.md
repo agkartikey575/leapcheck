@@ -1,30 +1,27 @@
-# Roadmap — Senior Product Manager
+# Roadmap: Senior Product Manager
 
 Owner agent: `product-manager` · Reports to: Chief Product Officer
 
-Status key: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
+Status: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
 
 ## Mission
-Turn strategy into crisp, testable user stories the engineers can build without guessing.
+Turn the PRD into small, testable stories engineers can ship without guessing.
 
 ## KPIs
 - Sprint predictability: _baseline TBD_
-- Bugs escaping to production: _baseline TBD_
-- Story clarity (rework rate): _baseline TBD_
+- Rework rate: _baseline TBD_
 
-## Q4 2026
-- ⬜ Backlog for v1 (stories + acceptance criteria)
-- ⬜ Stripe → EN16931 field mapping doc
+## Nov 2026
+- ⬜ Backlog to launch
+
+## Dec 2026
+- ⬜ Launch checklist
 
 ## Q1 2027
-- ⬜ Sprint plans to launch
-- ⬜ Beta feedback loop
+- ⬜ Pro backlog
 
 ## Q2 2027
-- ⬜ France backlog
-
-## H2 2027
-- ⬜ Accountant view backlog
+- ⬜ Node.js backlog
 
 ## Idea backlog
-- Pre-flight check on invoice creation: warn the merchant before finalizing an invoice that would fail validation.
+- Weekly 'what changed' digest for agencies: plugin updates that changed compatibility on their sites.

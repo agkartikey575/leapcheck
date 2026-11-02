@@ -1,29 +1,28 @@
-# Roadmap — Lead Product Designer
+# Roadmap: Lead Product Designer
 
 Owner agent: `ux-designer` · Reports to: Chief Product Officer
 
-Status key: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
+Status: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
 
 ## Mission
-Make compliance feel effortless: zero jargon, one obvious next step.
+Zero jargon, one obvious next step, instant trust.
 
 ## KPIs
-- Onboarding completion: _baseline TBD_
-- Support tickets caused by confusion: _baseline TBD_
+- Check completion rate: _baseline TBD_
+- Confusion tickets: _baseline TBD_
 
-## Q4 2026
-- ⬜ Wireframes: onboarding, settings, invoice status
-- ⬜ Error-message dictionary v1
+## Nov 2026
+- ⬜ Wireframes + copy v1
+- ⬜ Fix dictionary for top 50 PHPCompatibility rules
+
+## Dec 2026
+- ⬜ Final UI
 
 ## Q1 2027
-- ⬜ Final UI for launch
-- ⬜ Landing page design
+- ⬜ Agency dashboard
 
 ## Q2 2027
-- ⬜ FR localisation
-
-## H2 2027
-- ⬜ Accountant dashboard
+- ⬜ CLI/GitHub output design
 
 ## Idea backlog
-- Translate every validator error code into a one-sentence human fix ('Add your customer's street address').
+- Traffic-light report with a single 'Safe to upgrade?' answer per PHP version.

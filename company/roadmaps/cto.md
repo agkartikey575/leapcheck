@@ -1,34 +1,29 @@
-# Roadmap — Chief Technology Officer
+# Roadmap: Chief Technology Officer
 
 Owner agent: `cto` · Reports to: Chief Executive Officer
 
-Status key: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
+Status: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
 
 ## Mission
-Ship a correct, boringly reliable, nearly maintenance-free system that costs under €30/month to run.
+A correct, fast, near-zero-maintenance system that costs €0 to run.
 
 ## KPIs
-- Uptime: _baseline TBD_
-- Infra cost/month: _baseline TBD_
-- Mean time to fix: _baseline TBD_
-- Deploy frequency: _baseline TBD_
+- Scan throughput: _baseline TBD_
+- Run failure rate: _baseline TBD_
+- Infra cost (€0): _baseline TBD_
 
-## Q4 2026
-- ⬜ ADR-001 stack
-- ⬜ Repo structure, CI
-- ⬜ einvoice-core library skeleton with tests
+## Nov 2026
+- ⬜ Engine v0.1 end-to-end
+- ⬜ Batch scan of top plugins
+
+## Dec 2026
+- ⬜ Launch infra
 
 ## Q1 2027
-- ⬜ Stripe App v1 production
-- ⬜ KoSIT validation service
-- ⬜ Monitoring + alerting
+- ⬜ Hosting API
 
 ## Q2 2027
-- ⬜ PA partner integration
-- ⬜ Load test 50k invoices/month
-
-## H2 2027
-- ⬜ Peppol via partner AP
+- ⬜ Node.js analyzer
 
 ## Idea backlog
-- Open-source the core converter so the community finds bugs and keeps it current — free QA and free marketing.
+- Generic analyzer contract so each new language is a plug-in, not a rebuild.

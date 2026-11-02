@@ -1,35 +1,30 @@
-# Roadmap — Chief Product Officer
+# Roadmap: Chief Product Officer
 
 Owner agent: `cpo` · Reports to: Chief Executive Officer
 
-Status key: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
+Status: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
 
 ## Mission
-Build the product small businesses love because it removes a scary compliance problem in two minutes.
+Make the product so clear and trustworthy that a non-technical site owner upgrades PHP with confidence in under 2 minutes.
 
 ## KPIs
-- Activation rate (install → first valid e-invoice): _baseline TBD_
-- Time-to-first-invoice: _baseline TBD_
-- Validation pass rate: _baseline TBD_
-- NPS: _baseline TBD_
+- Time to first report: _baseline TBD_
+- Report clarity (support questions per 100 users): _baseline TBD_
+- Install → check rate: _baseline TBD_
 
-## Q4 2026
-- ⬜ CPO-1: Verify live Stripe Marketplace competitors
-- ⬜ PRD v1 signed off
-- ⬜ 10 discovery interview scripts + target list (for founder approval)
+## Nov 2026
+- ⬜ PRD v1
+- ⬜ Competitor teardown of incumbent + 4 small tools
+
+## Dec 2026
+- ⬜ Launch acceptance sign-off
 
 ## Q1 2027
-- ⬜ v1 launch DE
-- ⬜ Readiness score feature
-- ⬜ Onboarding < 2 min
+- ⬜ Pro/agency PRD
+- ⬜ Hosting API PRD
 
 ## Q2 2027
-- ⬜ France PRD with partner PA
-- ⬜ Accountant multi-client view PRD
-
-## H2 2027
-- ⬜ Peppol (BE) via partner
-- ⬜ Incoming e-invoice viewer (DE receiving obligation)
+- ⬜ Node.js PRD
 
 ## Idea backlog
-- An 'e-invoice readiness score' inside the Stripe Dashboard that shows which customers/invoices would fail and fixes them in one click.
+- A 'safe upgrade plan': ordered steps (update X, replace Y, then upgrade) instead of a raw error list.

@@ -1,28 +1,26 @@
-# Roadmap — Partnerships Manager
+# Roadmap: Partnerships Manager
 
 Owner agent: `partnerships-manager` · Reports to: Chief Operating Officer
 
-Status key: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
+Status: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
 
 ## Mission
-Secure the partners we need (French Plateforme Agréée, Peppol access point) and the accountant channel.
+Line up hosting companies and agencies as the first paying customers.
 
 ## KPIs
-- Partners signed: _baseline TBD_
-- Installs from partner referrals: _baseline TBD_
+- Partners in pipeline: _baseline TBD_
 
-## Q4 2026
-- ⬜ PA + access point shortlist with API docs
+## Nov 2026
+- ⬜ Host target list + offer
+
+## Dec 2026
+- ⬜ Outreach drafts
 
 ## Q1 2027
-- ⬜ Outreach drafts
-- ⬜ Accountant program design
+- ⬜ 2 pilots
 
 ## Q2 2027
-- ⬜ PA partner signed
-
-## H2 2027
-- ⬜ 10 accountant partners
+- ⬜ Paid contracts
 
 ## Idea backlog
-- Co-marketing with a PA: we bring Stripe merchants, they bring compliance credibility.
+- Hosts embed LeapCheck results in their 'upgrade PHP' button.

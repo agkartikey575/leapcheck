@@ -1,31 +1,27 @@
-# Roadmap — Staff Backend Engineer
+# Roadmap: Staff Backend Engineer (Rust)
 
 Owner agent: `backend-engineer` · Reports to: Chief Technology Officer
 
-Status key: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
+Status: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
 
 ## Mission
-Build the converter and webhook pipeline so every finalized Stripe invoice becomes a valid e-invoice.
+Build the Rust engine: scanning, detection, tracing, export.
 
 ## KPIs
-- Test coverage on core: _baseline TBD_
-- Validation pass rate on fixtures: _baseline TBD_
-- Webhook failure rate: _baseline TBD_
+- Scan time per plugin: _baseline TBD_
+- Crash-free runs: _baseline TBD_
 
-## Q4 2026
-- ⬜ einvoice-core CII + UBL generation
-- ⬜ Fixture tests green against KoSIT
+## Nov 2026
+- ⬜ Engine v0.1
+
+## Dec 2026
+- ⬜ Cache + parallel scans
 
 ## Q1 2027
-- ⬜ Webhook pipeline
-- ⬜ PDF/A-3 output
-- ⬜ Storage + download links
+- ⬜ API mode
 
 ## Q2 2027
-- ⬜ PA API client
-
-## H2 2027
-- ⬜ Peppol partner client
+- ⬜ tree-sitter rules
 
 ## Idea backlog
-- A CLI `npx einvoice-check <stripe-invoice-id>` for developers — growth loop via GitHub.
+- Content-hash cache so unchanged files across versions are never re-scanned.

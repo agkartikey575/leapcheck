@@ -1,30 +1,28 @@
-# Roadmap — Senior Frontend Engineer
+# Roadmap: Senior Frontend & WordPress Engineer
 
 Owner agent: `frontend-engineer` · Reports to: Chief Technology Officer
 
-Status key: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
+Status: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
 
 ## Mission
-Build the in-Dashboard experience and the public validator site.
+Build the free WordPress plugin and the public results website.
 
 ## KPIs
-- Lighthouse scores: _baseline TBD_
-- UI bug count: _baseline TBD_
-- Landing page conversion: _baseline TBD_
+- Plugin review pass first time: _baseline TBD_
+- Page speed: _baseline TBD_
 
-## Q4 2026
-- ⬜ Stripe App scaffold
-- ⬜ Landing page v0
+## Nov 2026
+- ⬜ Plugin v0.1
+- ⬜ Site v0.1
+
+## Dec 2026
+- ⬜ WordPress.org submission
 
 ## Q1 2027
-- ⬜ App views to launch
-- ⬜ Free validator page
+- ⬜ Agency dashboard UI
 
 ## Q2 2027
-- ⬜ FR i18n
-
-## H2 2027
-- ⬜ Accountant dashboard
+- ⬜ Node.js pages
 
 ## Idea backlog
-- A drag-and-drop 'check any e-invoice' page that becomes the top free tool in German search.
+- One-click 'email this report to my developer'.

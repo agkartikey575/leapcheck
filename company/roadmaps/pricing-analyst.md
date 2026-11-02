@@ -1,18 +1,21 @@
-# Roadmap — Pricing & Revenue Analyst
+# Roadmap: Pricing & Revenue Analyst
 
 Owner agent: `pricing-analyst` · Reports to: Chief Financial Officer
 
-Status key: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
+Status: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
 
 ## Mission
-Find the price that maximises revenue while keeping signup friction near zero.
+Find prices that agencies and hosts happily pay.
 
 ## KPIs
 - Free→paid conversion: _baseline TBD_
 - ARPA: _baseline TBD_
 
-## Q4 2026
-- ⬜ Pricing proposal with benchmarks
+## Nov 2026
+- ⬜ Pricing proposal
+
+## Dec 2026
+- ⬜ Freemius-vs-own billing analysis
 
 ## Q1 2027
 - ⬜ Launch pricing
@@ -20,8 +23,5 @@ Find the price that maximises revenue while keeping signup friction near zero.
 ## Q2 2027
 - ⬜ First experiment
 
-## H2 2027
-- ⬜ Partner tier
-
 ## Idea backlog
-- An 'accountant partner' tier: discounted bulk licences resold by Steuerberater to their clients.
+- Per-site pricing for agencies with a generous free tier.

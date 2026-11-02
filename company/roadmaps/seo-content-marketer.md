@@ -1,28 +1,27 @@
-# Roadmap — SEO & Content Lead (DE/FR)
+# Roadmap: SEO & Content Lead
 
 Owner agent: `seo-content-marketer` · Reports to: Chief Marketing Officer
 
-Status key: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
+Status: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
 
 ## Mission
-Rank #1 for the searches desperate Stripe users make ('Stripe XRechnung', 'Stripe E-Rechnung', 'Factur-X Stripe').
+Rank for what worried site owners search: 'is X compatible with PHP 8.4', 'PHP 8.2 end of life WordPress'.
 
 ## KPIs
-- Rankings for target keywords: _baseline TBD_
+- Rankings: _baseline TBD_
 - Organic signups: _baseline TBD_
 
-## Q4 2026
-- ⬜ Keyword map
-- ⬜ 5 cornerstone articles drafted
+## Nov 2026
+- ⬜ Keyword map + page template
+
+## Dec 2026
+- ⬜ 5 guides
 
 ## Q1 2027
-- ⬜ Publish 10 articles (after approval)
+- ⬜ Scale pages
 
 ## Q2 2027
-- ⬜ French content
-
-## H2 2027
-- ⬜ Mandate tracker SEO
+- ⬜ Node.js pages
 
 ## Idea backlog
-- Free templates and checklists ('E-Rechnung Checkliste für SaaS') that earn backlinks.
+- Per-plugin pages with real scan data: helpful, unique, honest.

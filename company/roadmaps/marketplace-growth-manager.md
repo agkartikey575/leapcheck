@@ -1,29 +1,27 @@
-# Roadmap — Marketplace & Partnerships Growth Manager
+# Roadmap: WordPress.org Growth Manager
 
 Owner agent: `marketplace-growth-manager` · Reports to: Chief Marketing Officer
 
-Status key: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
+Status: ⬜ todo · 🟨 in progress · ✅ done · ❌ dropped
 
 ## Mission
-Make our Stripe Marketplace listing the obvious choice and collect great reviews.
+Get approved first time and rank top 3 for 'php compatibility'.
 
 ## KPIs
-- Listing conversion: _baseline TBD_
-- Number and rating of reviews: _baseline TBD_
+- Search rank: _baseline TBD_
+- Rating: _baseline TBD_
 
-## Q4 2026
-- ⬜ Listing draft
-- ⬜ Stripe app review requirements checklist
+## Nov 2026
+- ⬜ readme.txt + guideline checklist
+
+## Dec 2026
+- ⬜ Submission
 
 ## Q1 2027
-- ⬜ Submit + launch
-- ⬜ Review flow
+- ⬜ Rank improvements
 
 ## Q2 2027
-- ⬜ Stripe partner application
-
-## H2 2027
-- ⬜ Second marketplace evaluation
+- ⬜ Second marketplace
 
 ## Idea backlog
-- Get featured in Stripe's own e-invoicing guide next to Billit.
+- Capture the abandoned incumbent's users with an honest 'modern alternative' listing.

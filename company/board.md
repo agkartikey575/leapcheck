@@ -1,28 +1,32 @@
-# Task Board
+# Task Board: LeapCheck
 
-Agents add tasks here under their owner. Format: `- [ ] ID: task (owner) — status/notes`
+Format: `- [ ] ID: task (owner): status/notes`
 
-## Now (this week)
-- [x] CPO-1: Verify live Stripe Marketplace: FAILED gate, 3+ German, 4+ French and several Peppol/KSeF apps exist (see docs/01)
-- [ ] CEO-1: Re-scope: run a gap scan across other platforms, or pick a new idea (ceo + cpo)
-- [ ] STD-1: Verify DE/FR/BE/PL dates against official sources (einvoice-standards-expert)
-- [ ] CTO-1: ADR-001 stack + repo structure (cto)
-- [ ] BE-1: einvoice-core: Stripe invoice → CII XML + UBL XML with tests (backend-engineer)
-- [ ] QA-1: First 20 fixtures + KoSIT validation in CI (qa-engineer)
-- [ ] PM-1: Stripe → EN 16931 field mapping (product-manager)
-
-## Next
-- [ ] UX-1: Wireframes for onboarding, settings, invoice status (ux-designer)
-- [ ] CFO-1: 12-month cost/revenue model (cfo)
-- [ ] PRC-1: Pricing proposal with benchmarks (pricing-analyst)
-- [ ] CMO-1: Positioning + name shortlist (cmo)
-- [ ] SEO-1: German keyword map (seo-content-marketer)
-- [ ] LEG-1: Draft ToS/Privacy/DPA (legal-privacy-advisor)
-- [ ] PART-1: Plateforme Agréée + Peppol partner shortlist (partnerships-manager)
+## Now (sprint 1: Nov 2026)
+- [ ] ENG-1: Engine v0.1: scan-wp, scan-dir, export, runs, health (backend-engineer / orchestrator)
+- [ ] CMP-1: engine/rules/php-signatures.json + php-extensions.json (compatibility-expert)
+- [ ] PLG-1: WordPress plugin v0.1 in plugin/ (frontend-engineer)
+- [ ] SITE-1: Public results site v0.1 in site/ (frontend-engineer, after PLG-1)
+- [ ] QA-1: Test corpus + golden tests plan (qa-engineer)
+- [ ] OPS-1: GitHub Actions CI + nightly scan workflow (devops-security-engineer)
+- [ ] PRD-1: PRD v1 + acceptance criteria (cpo + product-manager)
+- [ ] UX-1: Plugin screens + plain-language fix dictionary (ux-designer)
+- [ ] MKT-1: Positioning + launch plan (cmo)
+- [ ] SEO-1: Keyword map + per-plugin page template (seo-content-marketer)
+- [ ] WPO-1: readme.txt + WordPress.org guideline checklist (marketplace-growth-manager)
+- [ ] DEV-1: README/CONTRIBUTING/licence recommendation (developer-advocate)
+- [ ] LEG-1: Licence + privacy memo, privacy policy draft (legal-privacy-advisor)
+- [ ] FIN-1: €0 cost plan + free-tier limits (cfo) · PRC-1: pricing proposal (pricing-analyst)
+- [ ] CS-1: FAQ + support templates (customer-success-lead)
+- [ ] PART-1: Hosting-company target list + partner offer (partnerships-manager)
+- [ ] OPS-2: Operating cadence (coo)
+- [ ] CEO-1: Launch plan sign-off after sprint 1 outputs (ceo)
 
 ## Waiting on founder
-- [ ] Approve brand name and domain purchase
-- [ ] Create Stripe account + Stripe App developer access
-- [ ] Run discovery calls
+- [ ] Approve launch plan and public name "LeapCheck"
+- [ ] WordPress.org account for plugin submission (founder's own account)
 
 ## Done
+- [x] Idea research and selection (docs/03, docs/04)
+- [x] Scope + architecture + interfaces (docs/05–07)
+- [x] GitHub repo + Vercel connected
