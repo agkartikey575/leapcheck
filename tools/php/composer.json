@@ -1,0 +1,11 @@
+{
+  "name": "upgradesafe/php-tools",
+  "require": {
+    "squizlabs/php_codesniffer": "^4.0",
+    "phpcompatibility/php-compatibility": "dev-develop as 10.0.0",
+    "phpcsstandards/phpcsutils": "^1.1"
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true,
+  "config": { "allow-plugins": { "dealerdirect/phpcodesniffer-composer-installer": false } }
+}
