@@ -1,8 +1,12 @@
-# E-invoicing for Stripe (working name)
+# LeapCheck
 
-Turns every Stripe invoice into a validated German/French e-invoice (ZUGFeRD/Factur-X + XRechnung).
+**Check before you leap.** Know exactly what will break before you upgrade PHP (and, soon, Node.js and Python), including old libraries hidden inside your plugins and dependencies.
 
-- `docs/01-competition.md`: competition research
-- `docs/02-scope.md`: v1 product scope
-- `company/`: AI org: org chart, company roadmap, task board, operating manual, per-role roadmaps
-- `.claude/agents/`: the 20 agent definitions
+## Repository layout
+- `engine/`: Rust core engine (scanning, hidden-library detection, run tracing, static result export)
+- `tools/php/`: PHP analyzer dependencies (PHP_CodeSniffer + PHPCompatibility)
+- `docs/`: scope, architecture, research (`docs/archive-einvoice/` holds the earlier e-invoicing research)
+- `company/`, `.claude/agents/`: the AI company: agents, org chart, roadmaps, task board
+
+## Status
+Phase 1 in progress: WordPress/PHP, launching before PHP 8.2 end of support (31 Dec 2026).

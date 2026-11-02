@@ -1,0 +1,5 @@
+/engine/target/
+/tools/php/vendor/
+/data/
+*.sqlite
+*.sqlite-*
