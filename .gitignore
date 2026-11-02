@@ -3,3 +3,17 @@
 /data/
 *.sqlite
 *.sqlite-*
+
+# Internal only: never published
+/company/
+/.claude/
+/docs/archive-einvoice/
+/docs/03-new-idea-scan.md
+/docs/04-final-shortlist.md
+/docs/05-upgrade-checker-scope.md
+/docs/product/
+/docs/marketing/
+/docs/legal/
+/docs/partners/
+/docs/support/
+/docs/quality/

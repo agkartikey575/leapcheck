@@ -1,6 +1,6 @@
 # Architecture v2: generic core, language plug-ins, everything traced, €0 to run
 
-> v2 change (2026-11-02): founder wants the most optimized stack, maximum open source and **zero spending until traction**.
+> v2: optimized stack, maximum open source, zero running cost.
 
 ## Stack v2
 | Part | Choice | Why |
@@ -58,7 +58,7 @@ Hosting: one VPS (~€5–10/month), with nightly database backups to object sto
 
 ## Analysis of runs
 - An **admin "Runs" page** lists runs and their status, slowest steps, top errors, and lets you open any run to see its full trace.
-- A **daily health report**, auto-generated from the DB: runs, failure rate, errors grouped by cause, slowest packages, new findings. The QA and DevOps agents read it and open fixes.
+- A **daily health report**, auto-generated from the DB: runs, failure rate, errors grouped by cause, slowest packages, new findings. The team reviews it and fixes issues.
 - **Alerts** when the failure rate spikes or the nightly refresh doesn't finish. Sent by email or a chat message; channel to be decided.
 
 ## Privacy
