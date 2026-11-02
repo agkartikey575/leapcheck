@@ -1,0 +1,242 @@
+[
+  {
+    "slug": "contact-form-7",
+    "version": "6.2.4.1",
+    "kind": "plugin",
+    "why": "popular: latest version, 10M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "wordpress-seo",
+    "version": "28.8",
+    "kind": "plugin",
+    "why": "popular: latest version, 10M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "elementor",
+    "version": "4.3.6",
+    "kind": "plugin",
+    "why": "popular: latest version, 10M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "classic-editor",
+    "version": "1.7.0",
+    "kind": "plugin",
+    "why": "popular: latest version, 8M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "woocommerce",
+    "version": "11.2.1",
+    "kind": "plugin",
+    "why": "popular: latest version, 7M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review; very large codebase, ships Action Scheduler itself"
+  },
+  {
+    "slug": "litespeed-cache",
+    "version": "7.9.2",
+    "kind": "plugin",
+    "why": "popular: latest version, 7M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "akismet",
+    "version": "5.7.2",
+    "kind": "plugin",
+    "why": "popular: latest version, 5M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "wpforms-lite",
+    "version": "2.0.3.1",
+    "kind": "plugin",
+    "why": "popular: latest version, 5M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "all-in-one-wp-migration",
+    "version": "7.113",
+    "kind": "plugin",
+    "why": "popular: latest version, 5M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "wordfence",
+    "version": "9.0.2",
+    "kind": "plugin",
+    "why": "popular: latest version, 5M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "google-site-kit",
+    "version": "1.191.0",
+    "kind": "plugin",
+    "why": "popular: latest version, 5M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "updraftplus",
+    "version": "1.26.14",
+    "kind": "plugin",
+    "why": "popular: latest version, 4M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review; bundles many third-party libraries (UNVERIFIED list) \u2014 stress test for component detection"
+  },
+  {
+    "slug": "wp-mail-smtp",
+    "version": "4.10.3",
+    "kind": "plugin",
+    "why": "popular: latest version, 4M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review; also bundles Action Scheduler (vendor/woocommerce/action-scheduler, verified in SVN trunk)"
+  },
+  {
+    "slug": "seo-by-rank-math",
+    "version": "1.0.280",
+    "kind": "plugin",
+    "why": "popular: latest version, 4M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review; also bundles Action Scheduler (vendor/woocommerce/action-scheduler, verified in SVN tag 1.0.280)"
+  },
+  {
+    "slug": "jetpack",
+    "version": "16.3.1",
+    "kind": "plugin",
+    "why": "popular: latest version, 3M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "really-simple-ssl",
+    "version": "9.8.4",
+    "kind": "plugin",
+    "why": "popular: latest version, 3M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "duplicate-post",
+    "version": "4.7",
+    "kind": "plugin",
+    "why": "popular: latest version, 3M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "all-in-one-seo-pack",
+    "version": "5.0.4",
+    "kind": "plugin",
+    "why": "popular: latest version, 2M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "redirection",
+    "version": "5.10.1",
+    "kind": "plugin",
+    "why": "popular: latest version, 2M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "limit-login-attempts-reloaded",
+    "version": "3.4.0",
+    "kind": "plugin",
+    "why": "popular: latest version, 1M+ active installs per WordPress.org API on 2026-11-02; baseline that should mostly be 'compatible' or 'issues' \u2014 any 'breaks' needs manual review"
+  },
+  {
+    "slug": "contact-form-7",
+    "version": "5.1",
+    "kind": "plugin",
+    "why": "old version (5.1, c. late 2018, date UNVERIFIED); pairs with the latest release so the golden diff shows fixes over time; likely PHP 8 deprecations"
+  },
+  {
+    "slug": "woocommerce",
+    "version": "3.5.0",
+    "kind": "plugin",
+    "why": "old version (3.5.0, c. late 2018, date UNVERIFIED) of a huge plugin written for PHP 5.6/7.x; likely PHP 8 errors/deprecations (UNVERIFIED)"
+  },
+  {
+    "slug": "jetpack",
+    "version": "6.5.2",
+    "kind": "plugin",
+    "why": "old version (6.5.x, c. 2018, date UNVERIFIED); large multi-module codebase from the PHP 5.x era; likely breaks on PHP 8 (UNVERIFIED)"
+  },
+  {
+    "slug": "wordfence",
+    "version": "7.1.17",
+    "kind": "plugin",
+    "why": "old version (7.1.x, c. 2018-2019, date UNVERIFIED); security plugin with low-level PHP code; likely PHP 8 issues (UNVERIFIED)"
+  },
+  {
+    "slug": "updraftplus",
+    "version": "1.16.0",
+    "kind": "plugin",
+    "why": "old version (1.16.0, c. 2019, date UNVERIFIED); bundled third-party libraries from the PHP 5 era; likely PHP 8 breakage (UNVERIFIED)"
+  },
+  {
+    "slug": "redirection",
+    "version": "4.0",
+    "kind": "plugin",
+    "why": "old version (4.0, c. 2019, date UNVERIFIED); pairs with latest 5.x for a golden before/after diff"
+  },
+  {
+    "slug": "wp-super-cache",
+    "version": "1.6.4",
+    "kind": "plugin",
+    "why": "old version (1.6.4, c. 2018, date UNVERIFIED); procedural PHP 5-era caching code; likely deprecations on PHP 8 (UNVERIFIED)"
+  },
+  {
+    "slug": "w3-total-cache",
+    "version": "0.9.7",
+    "kind": "plugin",
+    "why": "old version (0.9.7, c. 2018, date UNVERIFIED); legacy caching code base with many bundled helpers; likely PHP 8 errors (UNVERIFIED)"
+  },
+  {
+    "slug": "mailchimp-for-wp",
+    "version": "4.2.5",
+    "kind": "plugin",
+    "why": "old version (4.2.5, c. 2018, date UNVERIFIED); pairs with latest 4.x; likely PHP 8 deprecations (UNVERIFIED)"
+  },
+  {
+    "slug": "tablepress",
+    "version": "1.9.2",
+    "kind": "plugin",
+    "why": "old version (1.9.2, c. 2019, date UNVERIFIED); bundles libraries/excel-reader.class.php, simplexlsx.class.php, csstidy/ and evalmath.class.php (verified in SVN tags/1.9.2) \u2014 old PHP 4/5-style code, likely PHP 8 breakage (UNVERIFIED)"
+  },
+  {
+    "slug": "gmail-smtp",
+    "version": "1.1.9",
+    "kind": "plugin",
+    "why": "bundles PHPMailer: PHPMailer/ and google-api-php-client/ folders (verified in SVN tags/1.1.9); old PHPMailer copy is a classic hidden-library case"
+  },
+  {
+    "slug": "tickera-event-ticketing-system",
+    "version": "3.6.0.9",
+    "kind": "plugin",
+    "why": "bundles TCPDF: includes/tcpdf/ (verified in SVN tags/3.6.0.9); latest version"
+  },
+  {
+    "slug": "woo-order-export-lite",
+    "version": "2.1.0",
+    "kind": "plugin",
+    "why": "bundles PHPExcel (classes/PHPExcel/ + PHPExcel.php) and FPDF (classes/FPDF/) (verified in SVN tags/2.1.0); PHPExcel is abandoned and known for PHP 7.4/8 problems"
+  },
+  {
+    "slug": "woo-order-export-lite",
+    "version": "4.1.4",
+    "kind": "plugin",
+    "why": "same plugin after the move to PhpSpreadsheet: classes/vendor/phpoffice, maennchen (ZipStream), markbaker, ezyang plus classes/FPDF/ (verified in SVN tags/4.1.4); golden pair with 2.1.0"
+  },
+  {
+    "slug": "post-smtp",
+    "version": "4.0.2",
+    "kind": "plugin",
+    "why": "bundles the Freemius SDK (freemius/) and a Postman/Phpmailer/ module (verified in SVN tags/4.0.2); latest version"
+  },
+  {
+    "slug": "wp-sheet-editor-bulk-spreadsheet-editor-for-posts-and-pages",
+    "version": "2.27.1",
+    "kind": "plugin",
+    "why": "bundles the Freemius SDK in vendor/freemius/ (verified in SVN tags/2.27.1); tests Freemius detection at a non-root path"
+  },
+  {
+    "slug": "mailpoet",
+    "version": "5.44.0",
+    "kind": "plugin",
+    "why": "bundles Action Scheduler (vendor/woocommerce/action-scheduler) and prefixed Twig, Doctrine, Symfony, Monolog, Carbon (vendor-prefixed/) (verified in SVN tags/5.44.0); tests namespaced/prefixed copies"
+  },
+  {
+    "slug": "email-subscribers",
+    "version": "5.9.40",
+    "kind": "plugin",
+    "why": "bundles Action Scheduler in a non-standard path: lite/includes/libraries/action-scheduler/ (verified in SVN trunk)"
+  },
+  {
+    "slug": "woocommerce-pdf-invoices-packing-slips",
+    "version": "5.16.6",
+    "kind": "plugin",
+    "why": "bundles dompdf, sabberworm/php-css-parser, masterminds/html5 prefixed by Strauss in vendor/strauss/ (verified in SVN tags/5.16.6); tests detection of prefixed libraries"
+  },
+  {
+    "slug": "print-invoices-packing-slip-labels-for-woocommerce",
+    "version": "5.0.4",
+    "kind": "plugin",
+    "why": "bundles dompdf, picqer (barcodes), sabberworm, masterminds and symfony in includes/vendor/ (verified in SVN tags/5.0.4); second dompdf copy to compare versions"
+  }
+]
