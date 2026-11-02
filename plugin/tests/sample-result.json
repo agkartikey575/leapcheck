@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "ecosystem": "wordpress-plugin",
+  "name": "contact-form-7",
+  "version": "5.1",
+  "scanned_at": "2026-11-02T12:00:00Z",
+  "engine_version": "0.1.0",
+  "targets": {
+    "php:8.3": {
+      "verdict": "compatible",
+      "errors": 0,
+      "warnings": 0,
+      "findings": []
+    },
+    "php:8.4": {
+      "verdict": "issues",
+      "errors": 0,
+      "warnings": 2,
+      "findings": [
+        {"rule_id": "PHPCompatibility.FunctionDeclarations.RemovedImplicitlyNullableParam.Deprecated", "severity": "warning", "confidence": "high",
+         "message": "Implicitly marking a parameter as nullable is deprecated since PHP 8.4.", "file": "includes/mail.php", "line": 161, "component": null,
+         "analyzer": "php:phpcompatibility"},
+        {"rule_id": "PHPCompatibility.FunctionDeclarations.RemovedImplicitlyNullableParam.Deprecated", "severity": "warning", "confidence": "high",
+         "message": "Implicitly marking a parameter as nullable is deprecated since PHP 8.4.", "file": "lib/PHPMailer/class.phpmailer.php", "line": 812, "component": "phpmailer",
+         "analyzer": "php:phpcompatibility"}
+      ]
+    },
+    "php:8.5": {
+      "verdict": "breaks",
+      "errors": 1,
+      "warnings": 2,
+      "findings": [
+        {"rule_id": "PHPCompatibility.FunctionDeclarations.RemovedImplicitlyNullableParam.Deprecated", "severity": "warning", "confidence": "high",
+         "message": "Implicitly marking a parameter as nullable is deprecated since PHP 8.4.", "file": "includes/mail.php", "line": 161, "component": null,
+         "analyzer": "php:phpcompatibility"},
+        {"rule_id": "PHPCompatibility.FunctionDeclarations.RemovedImplicitlyNullableParam.Deprecated", "severity": "warning", "confidence": "high",
+         "message": "Implicitly marking a parameter as nullable is deprecated since PHP 8.4.", "file": "lib/PHPMailer/class.phpmailer.php", "line": 812, "component": "phpmailer",
+         "analyzer": "php:phpcompatibility"},
+        {"rule_id": "PHPCompatibility.Example.RemovedFeature.Found", "severity": "error", "confidence": "medium",
+         "message": "Example removed feature used (fixture data, not a real PHP 8.5 rule).", "file": "lib/PHPMailer/class.smtp.php", "line": 40, "component": "phpmailer",
+         "analyzer": "php:phpcompatibility"}
+      ]
+    }
+  },
+  "components": [
+    {"name": "phpmailer", "version": "5.2.7", "kind": "php", "path": "lib/PHPMailer",
+     "detection": "signature", "known_vulnerabilities": 0}
+  ],
+  "requirements": [
+    {"name": "gd", "evidence_file": "inc/image.php", "evidence_line": 40}
+  ]
+}

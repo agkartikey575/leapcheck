@@ -1,0 +1,29 @@
+/* LeapCheck admin page. Local file, no external assets. */
+.leapcheck .leapcheck-consent,
+.leapcheck .leapcheck-summary {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-left: 4px solid #2271b1;
+	padding: 4px 16px 12px;
+	margin: 16px 0;
+	max-width: 900px;
+}
+.leapcheck .leapcheck-list { list-style: disc; margin-left: 20px; }
+.leapcheck .leapcheck-summary-list li { margin: 8px 0; }
+.leapcheck .leapcheck-summary-list em { color: #50575e; }
+.leapcheck .leapcheck-inline-form { display: inline-block; margin-right: 8px; }
+.leapcheck .leapcheck-verdict { white-space: nowrap; }
+.leapcheck .leapcheck-verdict--breaks { color: #b32d2e; font-weight: 600; }
+.leapcheck .leapcheck-verdict--issues { color: #996800; }
+.leapcheck .leapcheck-verdict--compatible { color: #00753a; }
+.leapcheck .leapcheck-verdict--missing,
+.leapcheck .leapcheck-verdict--unknown,
+.leapcheck .leapcheck-verdict--error { color: #50575e; }
+.leapcheck .leapcheck-details-row td { padding-top: 0; }
+.leapcheck .leapcheck-details summary { cursor: pointer; color: #2271b1; }
+.leapcheck .leapcheck-details[open] { padding-bottom: 8px; }
+.leapcheck .leapcheck-findings,
+.leapcheck .leapcheck-components { margin: 4px 0 12px; }
+.leapcheck .leapcheck-findings code,
+.leapcheck .leapcheck-components code,
+.leapcheck .leapcheck-current code { word-break: break-all; }
