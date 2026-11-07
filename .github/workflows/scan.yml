@@ -1,0 +1,263 @@
+# Nightly batch scan of WordPress.org plugins, sharded across a job matrix, then a static deploy to Vercel.
+#
+# Flow:  plan (shard matrix) -> build (leapcheck binary, once) -> scan (N shards in parallel)
+#        -> publish (merge exported JSON trees, validate, deploy public/ to Vercel)
+#
+# Security model (see docs/ops/runbook.md):
+#  - Plugin code is untrusted. It is downloaded and parsed, never executed. The scan jobs get NO secrets
+#    and a read-only GITHUB_TOKEN; only the publish job sees the Vercel secrets, and it only handles
+#    the JSON produced by our own engine.
+#  - Each shard writes its own SQLite file; only the exported JSON trees are merged.
+#
+# Secrets (repository -> Settings -> Secrets and variables -> Actions):
+#   VERCEL_TOKEN       Vercel access token scoped to the LeapCheck team/project
+#   VERCEL_ORG_ID      Vercel team/user id      (from `vercel link` -> .vercel/project.json "orgId")
+#   VERCEL_PROJECT_ID  Vercel project id        (from `vercel link` -> .vercel/project.json "projectId")
+#
+# Free-tier notes: standard GitHub-hosted runners are free for public repositories; each job is capped at
+# 6 h (we stop at 5.5 h) and the Free plan allows 20 concurrent jobs, so shards are capped at 20.
+name: Nightly scan
+
+on:
+  schedule:
+    - cron: "17 2 * * *" # 02:17 UTC daily (off the hour to avoid scheduler congestion)
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Number of parallel shards (1-20)"
+        required: false
+        default: "4"
+      list:
+        description: "Slug list (JSON array of {slug,version?,kind?} objects or plain slug strings)"
+        required: false
+        default: "engine/tests/corpus.json"
+      deploy:
+        description: "Deploy public/ to Vercel after the scan"
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-scan
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  SLUG_LIST: ${{ inputs.list || 'engine/tests/corpus.json' }}
+  TARGETS: "8.3,8.4,8.5" # scan-wp --target takes a comma-separated list: one download, three targets
+
+jobs:
+  plan:
+    name: Plan shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+      total: ${{ steps.plan.outputs.total }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          REQUESTED: ${{ inputs.shards || '4' }}
+        run: |
+          test -f "$SLUG_LIST" || { echo "::error::slug list $SLUG_LIST not found"; exit 1; }
+          jq -e 'type == "array"' "$SLUG_LIST" > /dev/null
+          n="$REQUESTED"
+          case "$n" in ''|*[!0-9]*) echo "::error::shards must be a number"; exit 1;; esac
+          [ "$n" -lt 1 ] && n=1
+          [ "$n" -gt 20 ] && n=20
+          echo "shards=$(jq -cn --argjson n "$n" '[range(0; $n)]')" >> "$GITHUB_OUTPUT"
+          echo "total=$n" >> "$GITHUB_OUTPUT"
+          echo "Planned $n shard(s) over $(jq length "$SLUG_LIST") entries from $SLUG_LIST"
+
+  build:
+    name: Build leapcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            engine/target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('engine/Cargo.lock') }}
+          restore-keys: cargo-release-${{ runner.os }}-
+      - name: Build release binary
+        working-directory: engine
+        run: cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leapcheck-bin
+          path: engine/target/release/leapcheck
+          retention-days: 1
+          if-no-files-found: error
+
+  scan:
+    name: Scan shard ${{ matrix.shard }}
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    env:
+      SHARD: ${{ matrix.shard }}
+      TOTAL: ${{ needs.plan.outputs.total }}
+      # Each shard writes its own SQLite file; every leapcheck subcommand takes --db.
+      DB: data/shard-${{ matrix.shard }}.sqlite
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: leapcheck-bin
+          path: engine/target/release
+      - run: chmod +x engine/target/release/leapcheck
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer:v2
+          coverage: none
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/composer/files
+          key: composer-${{ runner.os }}-${{ hashFiles('tools/php/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Install PHP tools
+        run: |
+          cd tools/php
+          composer install --no-plugins --no-interaction --no-progress --prefer-dist
+          vendor/bin/phpcs --config-set installed_paths ../../phpcompatibility/php-compatibility,../../phpcsstandards/phpcsutils
+          vendor/bin/phpcs -i | grep -q PHPCompatibility
+
+      - name: Select this shard's entries
+        # Shard by unique slug (not by entry) so every version of one plugin lands in the same shard;
+        # that keeps each /v1/{ecosystem}/{name}/ directory (incl. index.json) owned by exactly one shard.
+        run: |
+          jq -c --argjson shard "$SHARD" --argjson total "$TOTAL" '
+            map(if type == "string" then {slug: .} else . end)
+            | (map(.slug) | unique) as $slugs
+            | [ $slugs | to_entries[] | select(.key % $total == $shard) | .value ] as $mine
+            | map(select(.slug | IN($mine[])))
+            | .[]' "$SLUG_LIST" > "$RUNNER_TEMP/entries.jsonl"
+          echo "Shard $SHARD/$TOTAL: $(wc -l < "$RUNNER_TEMP/entries.jsonl") entries"
+
+      - name: Scan
+        run: |
+          mkdir -p data logs
+          ok=0; failed=0
+          while IFS= read -r entry; do
+            slug=$(jq -r '.slug' <<<"$entry")
+            version=$(jq -r '.version // empty' <<<"$entry")
+            kind=$(jq -r '.kind // "plugin"' <<<"$entry")
+            # Only accept WordPress.org-style slugs; the list is data, never shell.
+            if ! [[ "$slug" =~ ^[a-z0-9][a-z0-9-]{0,199}$ ]] || ! [[ -z "$version" || "$version" =~ ^[A-Za-z0-9._-]{1,50}$ ]] || ! [[ "$kind" =~ ^(plugin|theme)$ ]]; then
+              echo "::warning::skipping invalid entry: $entry"; failed=$((failed+1)); continue
+            fi
+            args=(--db "$DB" --slug "$slug" --kind "$kind" --target "$TARGETS")
+            [ -n "$version" ] && args+=(--version "$version")
+            # A failed scan is recorded as a failed run in the DB (see `leapcheck runs --failed`).
+            if timeout 20m engine/target/release/leapcheck scan-wp "${args[@]}" 2>>"logs/shard-$SHARD.jsonl"; then
+              ok=$((ok+1))
+            else
+              failed=$((failed+1))
+              echo "::warning::scan failed: $slug ${version:-latest} (see logs/shard-$SHARD.jsonl)"
+            fi
+            sleep 1 # be polite to downloads.wordpress.org
+          done < "$RUNNER_TEMP/entries.jsonl"
+          echo "ok=$ok failed=$failed"
+          echo "SCAN_OK=$ok" >> "$GITHUB_ENV"
+          echo "SCAN_FAILED=$failed" >> "$GITHUB_ENV"
+
+      - name: Export static JSON
+        # export prints {"exported_files":N,"out":...} on stdout and writes nothing when N is 0.
+        run: |
+          engine/target/release/leapcheck export --db "$DB" --out public 2>>"logs/shard-$SHARD.jsonl"
+          engine/target/release/leapcheck health --db "$DB" --hours 24 > "logs/health-shard-$SHARD.json" 2>>"logs/shard-$SHARD.jsonl" || true
+          engine/target/release/leapcheck runs --db "$DB" --failed --limit 500 > "logs/failed-runs-shard-$SHARD.txt" 2>>"logs/shard-$SHARD.jsonl" || true
+
+      - name: Upload exported JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-shard-${{ matrix.shard }}
+          path: public/
+          retention-days: 3
+          if-no-files-found: warn
+
+      - name: Upload traces (SQLite + logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: traces-shard-${{ matrix.shard }}
+          path: |
+            ${{ env.DB }}
+            logs/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Fail shard if most scans failed
+        # Isolated plugin failures are expected and recorded as runs; a mostly-failed shard means
+        # something systemic (network, engine bug) and must block the deploy.
+        run: |
+          total=$((SCAN_OK + SCAN_FAILED))
+          if [ "$total" -gt 0 ] && [ $((SCAN_FAILED * 2)) -gt "$total" ]; then
+            echo "::error::$SCAN_FAILED of $total scans failed in shard $SHARD"; exit 1
+          fi
+
+  publish:
+    name: Merge and deploy
+    needs: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Never deploy from forks or non-default branches.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: public-shard-*
+          path: shards
+
+      - name: Merge exported JSON trees
+        run: |
+          mkdir -p public
+          [ -d shards ] || { echo "::error::no shard output downloaded"; exit 1; }
+          # Each file path must come from exactly one shard; a collision means sharding is wrong.
+          dups=$(cd shards && find . -mindepth 2 -type f -printf '%P\n' | cut -d/ -f2- | sort | uniq -d)
+          if [ -n "$dups" ]; then echo "::error::files exported by more than one shard:"; echo "$dups"; exit 1; fi
+          for d in shards/*/; do cp -R "$d". public/; done
+
+      - name: Validate output
+        run: |
+          count=$(find public -type f -name '*.json' | wc -l)
+          echo "JSON files: $count"
+          [ "$count" -gt 0 ] || { echo "::error::nothing to deploy; keeping the current site"; exit 1; }
+          find public -type f -name '*.json' -print0 | xargs -0 -n 200 jq -e . > /dev/null
+          # Only static data goes out: no scripts or HTML from untrusted input.
+          if find public -type f ! -name '*.json' | grep -q .; then
+            echo "::error::unexpected non-JSON files in public/:"; find public -type f ! -name '*.json'; exit 1
+          fi
+          du -sh public
+
+      - name: Deploy to Vercel
+        if: github.event_name == 'schedule' || inputs.deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::warning::Vercel secrets not set; skipping deploy"; exit 0
+          fi
+          npm install --global --no-fund --no-audit vercel@65
+          vercel deploy public --prod --yes --token "$VERCEL_TOKEN"

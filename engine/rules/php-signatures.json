@@ -1,0 +1,352 @@
+[
+  {
+    "name": "phpmailer",
+    "match_file_regex": "(^|/)(class\\.phpmailer\\.php|PHPMailer\\.php)$",
+    "version_regex": "(?:\\$Version|const\\s+VERSION)\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "PHPMailer. 2.x/5.x ship class.phpmailer.php with $Version; 6.x ships src/PHPMailer.php with const VERSION. Versions < 6 are unmaintained and use PHP 4/5 idioms that fail on PHP 8. Case-sensitive on purpose so wrappers like class-sendpress-phpmailer.php are not matched.",
+    "verified_in": [
+      "wysija-newsletters@2.7.5 (inc/phpmailer/class.phpmailer.php, 2.0.4)",
+      "WordPress core 6.8.3 wp-includes/PHPMailer/PHPMailer.php (6.9.3; form check only, core is not a plugin)"
+    ]
+  },
+  {
+    "name": "tcpdf",
+    "match_file_regex": "(^|/)tcpdf\\.php$",
+    "version_regex": "//\\s*Version\\s*:\\s*(\\d+\\.\\d+[0-9.]*)",
+    "notes": "TCPDF. Version read from the file header comment ('// Version     : 6.11.3'). Case-sensitive: PhpSpreadsheet's Writer/Pdf/Tcpdf.php adapter is not matched.",
+    "verified_in": [
+      "give@4.19.1 (vendor/tecnickcom/tcpdf/tcpdf.php, 6.11.3)"
+    ]
+  },
+  {
+    "name": "fpdf",
+    "match_file_regex": "(^|/)fpdf\\.php$",
+    "version_regex": "(?:FPDF_VERSION['\\\"]\\s*,\\s*|const\\s+VERSION\\s*=\\s*)['\\\"](\\d[0-9.]*)['\\\"]",
+    "notes": "FPDF. 1.86 uses class const VERSION; older releases (1.7x/1.8x) use define('FPDF_VERSION', ...); both forms verified. Forks renamed to other file names (e.g. class-woe-fpdf.php) are not detected.",
+    "verified_in": [
+      "wedding-party-rsvp@8.5.6 (includes/lib/fpdf/fpdf.php, 1.86)",
+      "woo-order-export-lite@2.1.1 (classes/FPDF/fpdf.php, 1.81)"
+    ]
+  },
+  {
+    "name": "mpdf",
+    "match_file_regex": "(?i)(^|/)mpdf/(mpdf/)?(src/)?mpdf\\.php$",
+    "version_regex": "(?:const\\s+VERSION\\s*=\\s*|mPDF_VERSION['\\\"]\\s*,\\s*)['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "mPDF. 7.x/8.x: class Mpdf with const VERSION (verified). mPDF 5/6 (mpdf.php with define('mPDF_VERSION')) branch is UNVERIFIED. Requires the parent folder to be named mpdf so PhpSpreadsheet's Writer/Pdf/Mpdf.php adapter is not matched.",
+    "verified_in": [
+      "dk-pdf@2.3.1 (lib/packages/Mpdf/Mpdf.php, 8.2.4)"
+    ]
+  },
+  {
+    "name": "dompdf",
+    "match_file_regex": "(?i)(^|/)dompdf/src/Dompdf\\.php$",
+    "version_regex": "(\\b\\B)",
+    "notes": "dompdf 0.8+. Presence-only: Dompdf.php holds only the placeholder $version = 'dompdf'; the real version is in the plain-text file dompdf/VERSION, which the engine does not read (it only applies signatures to .php/.inc files). Engine follow-up: read <dir>/../VERSION for this rule. dompdf < 0.8 (dompdf_config.inc.php) is not covered.",
+    "verified_in": [
+      "woocommerce-pdf-invoices-packing-slips@5.16.6 (vendor/strauss/dompdf/dompdf/src/Dompdf.php; VERSION file says 3.1.6)",
+      "wp-user-manager@2.10.5 (vendor-dist/dompdf/dompdf/src/Dompdf.php; VERSION file says 2.0.2)"
+    ]
+  },
+  {
+    "name": "guzzle",
+    "match_file_regex": "(?i)(^|/)guzzle(http)?/(guzzle/)?(src/)?ClientInterface\\.php$",
+    "version_regex": "const\\s+(?:MAJOR_)?VERSION\\s*=\\s*['\\\"]?(\\d+(?:\\.\\d+)*)",
+    "notes": "Guzzle 6+ (GuzzleHttp). Guzzle 6 has const VERSION = '6.5.5' (full version); Guzzle 7+ only has MAJOR_VERSION, so only the major number is reported. Does not match Guzzle 3 (separate rule) or psr/http-client's ClientInterface.",
+    "verified_in": [
+      "updraftplus@1.26.14 (vendor/guzzlehttp/guzzle/src/ClientInterface.php, 6.5.5)",
+      "wp-mail-smtp@4.10.3 (vendor_prefixed/guzzlehttp/guzzle/src/ClientInterface.php, 7)",
+      "amazon-s3-and-cloudfront@3.4.4 (vendor/Aws3/GuzzleHttp/ClientInterface.php, 8)"
+    ]
+  },
+  {
+    "name": "guzzle3",
+    "match_file_regex": "(^|/)Guzzle/Common/Version\\.php$",
+    "version_regex": "const\\s+VERSION\\s*=\\s*['\\\"](\\d[0-9.]*)['\\\"]",
+    "notes": "Legacy Guzzle 3 (guzzle/guzzle, abandoned 2015). Not maintained for PHP 8.",
+    "verified_in": [
+      "updraftplus@1.26.14 (vendor/guzzle/guzzle/src/Guzzle/Common/Version.php, 3.9.3)"
+    ]
+  },
+  {
+    "name": "twig",
+    "match_file_regex": "(?i)(^|/)twig/twig/src/Environment\\.php$",
+    "version_regex": "const\\s+VERSION\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "Twig 1.38+/2.x/3.x (namespaced src/Environment.php). The lib/Twig/Environment.php file in late 1.x is only a class_alias stub and is deliberately not matched. Twig 1.x < 1.38 (no src/ folder) is a known false negative.",
+    "verified_in": [
+      "wp-rss-aggregator@5.6.0 (v4/vendor/twig/twig/src/Environment.php, 1.44.6)",
+      "mailpoet@5.44.0 (vendor-prefixed/twig/twig/src/Environment.php, 3.11.2)",
+      "wp-simple-firewall@22.3.4 (vendor_prefixed/twig/twig/src/Environment.php, 3.11.3)"
+    ]
+  },
+  {
+    "name": "simplepie",
+    "match_file_regex": "(^|/)SimplePie\\.php$",
+    "version_regex": "(?:SIMPLEPIE_VERSION['\\\"]\\s*,\\s*|const\\s+VERSION\\s*=\\s*)['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "SimplePie bundled by a plugin (WordPress core ships its own copy in wp-includes, which is not under a plugin root). 1.5 single-file uses define('SIMPLEPIE_VERSION'); 1.8 uses src/SimplePie.php const VERSION. 1.8's library/SimplePie.php shim defines the constant from the class, so it matches the path but not the version.",
+    "verified_in": [
+      "wpematico@2.0 (app/lib/SimplePie.php, 1.5)",
+      "WordPress core 6.8.3 wp-includes/SimplePie/src/SimplePie.php (1.8.0; form check only)"
+    ]
+  },
+  {
+    "name": "phpexcel",
+    "match_file_regex": "(^|/)PHPExcel\\.php$",
+    "version_regex": "@version\\s+(\\d+\\.\\d+\\.\\d+)",
+    "notes": "PHPExcel: ABANDONED (archived 2019, replaced by PhpSpreadsheet). Uses curly-brace string offsets and other removed syntax; known to fatal on PHP 8. Presence alone is the signal. Composer copies keep the '##VERSION##' placeholder, so the version is often unknown; release tarballs have '@version 1.8.0, 2014-03-02'.",
+    "verified_in": [
+      "woo-order-export-lite@2.1.1 (classes/PHPExcel.php, version placeholder)",
+      "gf-entries-in-excel@1.0.0 (vendor/phpoffice/phpexcel/Classes/PHPExcel.php, version placeholder; 1.8.1 per changelog.txt)"
+    ]
+  },
+  {
+    "name": "phpspreadsheet",
+    "match_file_regex": "(^|/)PhpSpreadsheet/Spreadsheet\\.php$",
+    "version_regex": "(\\b\\B)",
+    "notes": "PhpSpreadsheet. No version constant exists in its source: presence-only (version_regex is the never-matching pattern (\\b\\B)). Version would need vendor/composer/installed.json.",
+    "verified_in": [
+      "wpdatatables@6.6.1.1 (lib/phpoffice/phpspreadsheet/src/PhpSpreadsheet/Spreadsheet.php)",
+      "tablepress@3.4.1 (libraries/vendor/PhpSpreadsheet/Spreadsheet.php)"
+    ]
+  },
+  {
+    "name": "monolog",
+    "match_file_regex": "(^|/)Monolog/Logger\\.php$",
+    "version_regex": "const\\s+API\\s*=\\s*(\\d+)",
+    "notes": "Monolog. Only the API (major) number exists in source: 1, 2 or 3. Requires the Monolog/ folder so PhpSpreadsheet's Calculation/Engine/Logger.php is not matched.",
+    "verified_in": [
+      "post-smtp@4.0.2 (vendor_prefixed/monolog/monolog/src/Monolog/Logger.php, 1)",
+      "google-site-kit@1.191.0 (third-party/monolog/.../Monolog/Logger.php, 2)",
+      "amazon-s3-and-cloudfront@3.4.4 (vendor/Gcp/monolog/.../Monolog/Logger.php, 3)"
+    ]
+  },
+  {
+    "name": "carbon",
+    "match_file_regex": "(^|/)Carbon/Carbon\\.php$",
+    "version_regex": "(\\b\\B)",
+    "notes": "nesbot/carbon. No version constant in source: presence-only (version_regex is the never-matching pattern (\\b\\B)).",
+    "verified_in": [
+      "easy-digital-downloads@3.7.3 (libraries/Carbon/src/Carbon/Carbon.php)",
+      "mailpoet@5.44.0 (vendor-prefixed/nesbot/carbon/src/Carbon/Carbon.php)",
+      "wp-user-manager@2.10.5",
+      "wp-simple-firewall@22.3.4"
+    ]
+  },
+  {
+    "name": "freemius",
+    "match_file_regex": "(^|/)freemius/start\\.php$",
+    "version_regex": "\\$this_sdk_version\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "Freemius WordPress SDK (licensing/telemetry). Very common; old SDKs have had security fixes, so the version matters.",
+    "verified_in": [
+      "foogallery@3.1.1 (freemius/start.php, 2.13.0)",
+      "tablepress@3.4.1 (libraries/freemius/start.php, 2.13.5)",
+      "post-smtp@4.0.2 (freemius/start.php, 2.13.4)"
+    ]
+  },
+  {
+    "name": "action-scheduler",
+    "match_file_regex": "(^|/)action-scheduler\\.php$",
+    "version_regex": "register\\(\\s*['\\\"](\\d+\\.\\d+\\.\\d+)['\\\"]",
+    "notes": "WooCommerce Action Scheduler. Version read from the ActionScheduler_Versions::register('x.y.z') call, which survives builds that strip the header comment (MailPoet). Only the highest bundled version is loaded at runtime.",
+    "verified_in": [
+      "action-scheduler@4.2.0",
+      "wp-mail-smtp@4.10.3 (vendor/woocommerce/action-scheduler, 4.1.0)",
+      "mailpoet@5.44.0 (header stripped, 3.9.3)",
+      "sydney theme@2.73 (vendor/woocommerce/action-scheduler, 3.9.3)"
+    ]
+  },
+  {
+    "name": "cmb2",
+    "match_file_regex": "(?i)(^|/)cmb2/init\\.php$",
+    "version_regex": "const\\s+VERSION\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "CMB2 (custom meta boxes). Bundled copies live in a cmb2/ or CMB2/ folder. The standalone CMB2 plugin's own init.php is at the plugin root and is intentionally not matched.",
+    "verified_in": [
+      "cmb2@2.13.5 (verified against path 'cmb2/init.php', i.e. the library folder as bundlers ship it)"
+    ]
+  },
+  {
+    "name": "redux-framework",
+    "match_file_regex": "(^|/)redux-core/framework\\.php$",
+    "version_regex": "Redux_Core::\\$version\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "Redux Framework 4.x (redux-core/). See 'reduxcore' for 3.x.",
+    "verified_in": [
+      "redux-framework@4.5.17 (redux-core/framework.php, 4.5.17)"
+    ]
+  },
+  {
+    "name": "reduxcore",
+    "match_file_regex": "(?i)(^|/)reduxcore/framework\\.php$",
+    "version_regex": "\\$_version\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "Redux Framework 3.x (ReduxCore/). End of life; many themes bundle it. Copies in renamed folders (e.g. virtue theme's themeoptions/framework.php, 3.6.9) are a known false negative because 'framework.php' alone is too generic.",
+    "verified_in": [
+      "redux-framework@3.6.18 (ReduxCore/framework.php, 3.6.18)"
+    ]
+  },
+  {
+    "name": "titan-framework",
+    "match_file_regex": "(^|/)titan-framework\\.php$",
+    "version_regex": "TF_VERSION['\\\"]\\s*,\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "Titan Framework (options framework; abandoned). Bundles an old scssphp fork (see scssphp-legacy).",
+    "verified_in": [
+      "titan-framework@1.12.1 (titan-framework.php, 1.12.1)"
+    ]
+  },
+  {
+    "name": "tgm-plugin-activation",
+    "match_file_regex": "(?i)(^|/)class-tgm-plugin-activation\\.php$",
+    "version_regex": "TGMPA_VERSION\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "TGM Plugin Activation (mostly in themes). 2.6.1 has been the last release since 2016.",
+    "verified_in": [
+      "vantage theme@1.20.33 (inc/class-tgm-plugin-activation.php, 2.6.1)",
+      "virtue theme@3.4.15 (lib/class-tgm-plugin-activation.php, 2.6.1)"
+    ]
+  },
+  {
+    "name": "kirki",
+    "match_file_regex": "(^|/)kirki\\.php$",
+    "version_regex": "define\\(\\s*['\\\"]KIRKI_VERSION['\\\"]\\s*,\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "Kirki Customizer Framework, often bundled in themes under inc/kirki/. Also matches the Kirki plugin's own main file. Case-sensitive on purpose: Kirki 4+ also ships a class file .../compatibility/src/Kirki.php that must not count as a second copy.",
+    "verified_in": [
+      "kirki@6.4.1 (kirki.php, 6.4.1)",
+      "flash theme@1.5.0 (inc/kirki/kirki.php, 4.2.0)"
+    ]
+  },
+  {
+    "name": "carbon-fields",
+    "match_file_regex": "(?i)(^|/)carbon-fields/config\\.php$",
+    "version_regex": "VERSION['\\\"]\\s*,\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "htmlburger/carbon-fields. Version from define('Carbon_Fields\\VERSION', 'x.y.z') (also matches the namespace-prefixed form).",
+    "verified_in": [
+      "wp-user-manager@2.10.5 (vendor-dist/htmlburger/carbon-fields/config.php, 3.6.9)"
+    ]
+  },
+  {
+    "name": "stripe-php",
+    "match_file_regex": "(?i)(^|/)stripe(-php)?/lib/Stripe\\.php$",
+    "version_regex": "const\\s+VERSION\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "Stripe PHP SDK. Requires .../stripe/lib/Stripe.php or stripe-php/lib/Stripe.php so plugins' own Stripe.php gateway classes are not matched.",
+    "verified_in": [
+      "give@4.19.1 (7.128.0)",
+      "paid-memberships-pro@3.2.2 (10.0.0)",
+      "easy-digital-downloads@3.7.3 (15.10.0)",
+      "stripe@4.17.5 (16.0.0)",
+      "stripe-payments@2.1.4 (7.110.0)",
+      "restrict-content@4.0.5 (10.3.0)",
+      "wp-user-manager@2.10.5 (10.5.0)"
+    ]
+  },
+  {
+    "name": "paypal-rest-sdk",
+    "match_file_regex": "(^|/)PayPal/Core/PayPalConstants\\.php$",
+    "version_regex": "SDK_VERSION\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "paypal/rest-api-sdk-php (deprecated by PayPal in 2019).",
+    "verified_in": [
+      "paypal-for-woocommerce@1.5.7 (classes/lib/PayPal/Core/PayPalConstants.php, 1.6.4)"
+    ]
+  },
+  {
+    "name": "google-api-client",
+    "match_file_regex": "(?i)(^|/)(apiclient/src|google-api-php-client/src|Google)/Client\\.php$",
+    "version_regex": "(?:LIBVER|VERSION)\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "google/apiclient. 2.x: const LIBVER = \"2.12.6\"; 2.19+: private const VERSION with LIBVER = self::VERSION; 1.x: Google/Client.php LIBVER \"1.1.4\" (very old, PHP 8 risk). Does not match per-service Client.php files.",
+    "verified_in": [
+      "google-site-kit@1.191.0 (2.12.6)",
+      "wp-mail-smtp@4.10.3 (2.12.6)",
+      "gmail-smtp@1.2.3.23 (2.19.1)",
+      "updraftplus@1.26.14 (includes/Google/Client.php, 1.1.4)"
+    ]
+  },
+  {
+    "name": "aws-sdk-php",
+    "match_file_regex": "(^|/)Aws/Sdk\\.php$",
+    "version_regex": "const\\s+VERSION\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "AWS SDK for PHP v3. WARNING: in 3.392.1 the VERSION constant is at byte 72,835, beyond the engine's 64 KB read window, so the version comes back unknown unless the window is raised (see README).",
+    "verified_in": [
+      "amazon-s3-and-cloudfront@3.4.4 (vendor/Aws3/Aws/Sdk.php, 3.392.1 found at byte 72835: path verified, version NOT extractable within 64 KB)"
+    ]
+  },
+  {
+    "name": "htmlpurifier",
+    "match_file_regex": "(^|/)HTMLPurifier\\.php$",
+    "version_regex": "(?:\\$version|const\\s+VERSION)\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "ezyang/htmlpurifier. The single-file HTMLPurifier.standalone.php build is not covered (UNVERIFIED).",
+    "verified_in": [
+      "post-smtp@4.0.2 (includes/libs/HTMLPurifier/HTMLPurifier.php, 4.18.0)",
+      "wpdatatables@6.6.1.1 (4.19.0)",
+      "woo-order-export-lite@4.1.4 (4.19.0)"
+    ]
+  },
+  {
+    "name": "phpseclib",
+    "match_file_regex": "(^|/)phpseclib/Net/SSH2\\.php$",
+    "version_regex": "(\\b\\B)",
+    "notes": "phpseclib. No version constant in source: presence-only (version_regex is the never-matching pattern (\\b\\B)). 1.x/2.x vs 3.x can be told apart by namespace (phpseclib\\ vs phpseclib3\\) but not by number.",
+    "verified_in": [
+      "updraftplus@1.26.14 (vendor/phpseclib/phpseclib/phpseclib/Net/SSH2.php)",
+      "google-site-kit@1.191.0 (third-party/phpseclib/.../Net/SSH2.php)"
+    ]
+  },
+  {
+    "name": "parsedown",
+    "match_file_regex": "(^|/)Parsedown\\.php$",
+    "version_regex": "const\\s+version\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "erusev/parsedown. 1.7.4 emits deprecations on PHP 8.x.",
+    "verified_in": [
+      "wp-githuber-md@1.17.0 (vendor/erusev/parsedown/Parsedown.php, 1.7.4)",
+      "wp-rss-aggregator@5.6.0 (1.7.4)"
+    ]
+  },
+  {
+    "name": "mobile-detect",
+    "match_file_regex": "(^|/)Mobile_Detect\\.php$",
+    "version_regex": "const\\s+VERSION\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "serbanghita/Mobile-Detect 2.x. The 3.x/4.x layout (src/MobileDetect.php) is not covered (UNVERIFIED).",
+    "verified_in": [
+      "ad-inserter@2.8.20 (includes/mobiledetect/Mobile_Detect.php, 2.8.36)"
+    ]
+  },
+  {
+    "name": "getid3",
+    "match_file_regex": "(?i)(^|/)getid3/getid3\\.php$",
+    "version_regex": "const\\s+VERSION\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "getID3 (WordPress core ships a reduced copy in wp-includes/ID3, which is not under a plugin root).",
+    "verified_in": [
+      "powerpress@11.18.0 (getid3/getid3.php, 1.9.12-201602240818)"
+    ]
+  },
+  {
+    "name": "scssphp",
+    "match_file_regex": "(^|/)scssphp/src/Version\\.php$",
+    "version_regex": "VERSION\\s*=\\s*['\\\"]v?(\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "scssphp/scssphp 1.x+ (namespaced).",
+    "verified_in": [
+      "wp-scss@5.0.0 (scssphp/src/Version.php, 1.13.0)"
+    ]
+  },
+  {
+    "name": "scssphp-legacy",
+    "match_file_regex": "(^|/)scss\\.inc\\.php$",
+    "version_regex": "\\$VERSION\\s*=\\s*['\\\"]v?(\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "leafo/scssphp 0.x single-file build (scss.inc.php with static $VERSION). Abandoned, PHP 8 risk. Modern scssphp also ships a scss.inc.php loader without $VERSION: it matches the path but not the version, so treat a version-less hit as 'scssphp, version unknown' and prefer the 'scssphp' rule.",
+    "verified_in": [
+      "titan-framework@1.12.1 (inc/scssphp/scss.inc.php, renamed class titanscssc, v0.0.9)"
+    ]
+  },
+  {
+    "name": "lessphp",
+    "match_file_regex": "(?i)(^|/)lessphp/lessc\\.inc\\.php$",
+    "version_regex": "\\$VERSION\\s*=\\s*['\\\"]v?(\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "leafo/lessphp (abandoned 2014; PHP 8 risk). Copies in folders not named lessphp are a known false negative.",
+    "verified_in": [
+      "wp-less@1.9.8 (vendor/leafo/lessphp/lessc.inc.php, 0.5.0)"
+    ]
+  },
+  {
+    "name": "less.php",
+    "match_file_regex": "(^|/)Less/Version\\.php$",
+    "version_regex": "const\\s+version\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "oyejorge/less.php (abandoned) and its maintained fork wikimedia/less.php. The version is less.php's build number, not the less.js compatibility version.",
+    "verified_in": [
+      "wp-less@1.9.8 (vendor/oyejorge/less.php/lib/Less/Version.php, 1.7.0.13; vendor/wikimedia/less.php/lib/Less/Version.php, 3.2.1)"
+    ]
+  }
+]
