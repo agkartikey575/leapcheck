@@ -59,7 +59,7 @@ After opt-in, the plugin makes plain HTTPS GET requests to the LeapCheck results
 
 This plugin connects to the LeapCheck results service (static JSON files hosted at https://leapcheck.vercel.app) to show PHP compatibility results. It does so only after an administrator opts in, and only when the LeapCheck admin page is opened and no cached result exists. The data sent is described in the Privacy section above.
 
-The service is hosted on Vercel. Vercel privacy policy: https://vercel.com/legal/privacy-policy
+LeapCheck privacy policy: https://leapcheck.vercel.app/privacy/ . The service is hosted on Vercel; Vercel privacy policy: https://vercel.com/legal/privacy-policy
 
 == Changelog ==
 

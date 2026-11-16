@@ -104,7 +104,7 @@ fn page(title: &str, desc: &str, canonical: &str, noindex: bool, jsonld: &str, b
 {body}\
 <footer>LeapCheck checks public plugin code for PHP version compatibility with open-source static analysis. Results are automated and are not a guarantee. \
 LeapCheck is not affiliated with WordPress, the WordPress Foundation or any plugin author; names are trademarks of their owners. \
-<a href=\"/about/how-we-scan/\">Methodology and limits</a> · <a href=\"https://github.com/agkartikey575/leapcheck/issues/new?title=Wrong%20result\">Report a wrong result</a></footer>\
+<a href=\"/about/how-we-scan/\">Methodology and limits</a> · <a href=\"/privacy/\">Privacy</a> · <a href=\"https://github.com/agkartikey575/leapcheck/issues/new?title=Wrong%20result\">Report a wrong result</a></footer>\
 </div></body></html>",
         t = esc(title), d = esc(desc), c = esc(canonical), css = CSS,
         robots = if noindex { "<meta name=\"robots\" content=\"noindex,follow\">" } else { "" },
@@ -355,6 +355,23 @@ fetch("/v1/wordpress-plugin/"+s+"/index.json").then(function(x){{if(!x.ok)throw 
 <h2>Open source</h2><p>The scanner is open source: <a href="https://github.com/agkartikey575/leapcheck">github.com/agkartikey575/leapcheck</a>.</p>"#;
     write(out, "about/how-we-scan/index.html", &page("How LeapCheck scans plugins for PHP compatibility", "Methodology, verdicts and limits of LeapCheck's automated PHP compatibility scans.", &format!("{base}/about/how-we-scan/"), false, "", about))?;
     n += 1;
+
+    let privacy = r#"<h1>Privacy</h1><p class="small">Last updated: 16 November 2026</p>
+<h2>The short version</h2><ul>
+<li><b>We don't collect your site's content, your users' data, or your name.</b></li>
+<li>The LeapCheck plugin does nothing online until you click its consent button.</li>
+<li>After that, it downloads public result files from this website, one per plugin version. Like any website visit, our hosting provider briefly sees your server's IP address. We don't keep a database of who asked for what.</li>
+<li>This website uses <b>no cookies, no analytics and no advertising trackers</b>.</li></ul>
+<h2>Who we are</h2><p>LeapCheck is an open-source project maintained on GitHub at <a href="https://github.com/agkartikey575/leapcheck">github.com/agkartikey575/leapcheck</a>. For privacy questions, contact the maintainer privately through GitHub.</p>
+<h2>The WordPress plugin</h2><p>To build your report, the plugin reads, on your own server, only the names (slugs) and version numbers of your installed plugins and themes, and your PHP version. Nothing else: no posts, pages, users, orders, emails or settings.</p>
+<p>After you opt in, it requests public files such as <code>/v1/wordpress-plugin/contact-form-7/5.1.json</code>. Each request contains only the slug and version in the address, your server's IP address (which every internet request carries) and a generic label <code>LeapCheck/version</code>. The plugin deliberately replaces WordPress's default request label, which would contain your site's address. We do not receive or store the list of plugins you have.</p>
+<p>You can turn checking off at any time on the plugin's page (Tools → LeapCheck), which also deletes cached results. Deleting the plugin removes all its settings. If a plugin is not in our database, the plugin says so; it never uploads that plugin's code.</p>
+<h2>This website</h2><p>No cookies, no analytics, no advertising or social-media trackers, no third-party fonts or scripts. Our hosting provider (Vercel Inc.) receives standard technical data with each request (IP address, browser type, page and time) to deliver pages and protect against attacks, and keeps short-lived request logs. We don't export or combine them.</p>
+<h2>Legal basis and your rights</h2><p>We process IP addresses and request details under our legitimate interest in delivering the files and pages you ask for and keeping the service secure (Article 6(1)(f) GDPR). You can ask for access, correction, deletion, restriction or objection; because we keep no database of plugin requests, we usually hold nothing that can be linked to you. You can also complain to your data-protection authority.</p>
+<h2>Changes</h2><p>We will update this page before we change what data we process, including before any accounts or paid plans launch. The plugin will ask you again before any new data leaves your site.</p>"#;
+    write(out, "privacy/index.html", &page("Privacy | LeapCheck", "LeapCheck collects no site data: no cookies, no analytics, and the plugin only fetches public files after you opt in.", &format!("{base}/privacy/"), false, "", privacy))?;
+    n += 1;
+    sitemap.push((format!("{base}/privacy/"), String::new()));
 
     let mut sm = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n");
     for (u, lm) in &sitemap {
