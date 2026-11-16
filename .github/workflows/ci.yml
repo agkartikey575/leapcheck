@@ -124,3 +124,6 @@ jobs:
             php -l "$f" > /dev/null || { echo "::error file=$f::php -l failed"; status=1; }
           done < <(find plugin -type f -name '*.php' -print0)
           exit $status
+
+      - name: Plugin logic tests
+        run: php plugin/tests/test-functions.php

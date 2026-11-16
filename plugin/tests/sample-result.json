@@ -5,6 +5,8 @@
   "version": "5.1",
   "scanned_at": "2026-11-02T12:00:00Z",
   "engine_version": "0.1.0",
+  "display_name": "Contact Form 7",
+  "active_installs": 10000000,
   "targets": {
     "php:8.3": {
       "verdict": "compatible",
@@ -22,6 +24,9 @@
          "analyzer": "php:phpcompatibility"},
         {"rule_id": "PHPCompatibility.FunctionDeclarations.RemovedImplicitlyNullableParam.Deprecated", "severity": "warning", "confidence": "high",
          "message": "Implicitly marking a parameter as nullable is deprecated since PHP 8.4.", "file": "lib/PHPMailer/class.phpmailer.php", "line": 812, "component": "phpmailer",
+         "analyzer": "php:phpcompatibility"},
+        {"rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.get_magic_quotes_gpcDeprecatedRemoved", "severity": "info", "confidence": "high",
+         "message": "Guarded by function_exists(); skipped on newer PHP.", "file": "includes/compat.php", "line": 12, "component": null,
          "analyzer": "php:phpcompatibility"}
       ]
     },
@@ -47,6 +52,9 @@
      "detection": "signature", "known_vulnerabilities": 0}
   ],
   "requirements": [
-    {"name": "gd", "evidence_file": "inc/image.php", "evidence_line": 40}
+    {"name": "gd", "evidence_file": "inc/image.php", "evidence_line": 40},
+    {"name": "intl", "evidence_file": "inc/i18n.php", "evidence_line": 7},
+    {"name": "gd", "evidence_file": "inc/thumb.php", "evidence_line": 3},
+    {"name": "../bad name", "evidence_file": "x.php", "evidence_line": 1}
   ]
 }

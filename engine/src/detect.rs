@@ -78,7 +78,7 @@ pub fn components(root: &Path, rules: &Rules) -> Vec<Component> {
         out.entry((c.name.clone(), c.path.clone())).or_insert(c);
     };
 
-    for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()) {
+    for entry in WalkDir::new(root).sort_by_file_name().into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()) {
         let p = entry.path();
         let r = rel(root, p);
         let fname = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
@@ -206,19 +206,32 @@ fn retire_detect(rules: &Rules, rel_path: &str, fname: &str, p: &Path) -> Option
     None
 }
 
-fn parse_ver(v: &str) -> Vec<u64> {
-    v.split(|c: char| !c.is_ascii_digit()).filter(|s| !s.is_empty()).take(4).map(|s| s.parse().unwrap_or(0)).collect()
+/// Split a version into its numeric release part and a pre-release suffix ("6.0.0-rc1" -> [6,0,0], "rc1").
+fn parse_ver(v: &str) -> (Vec<u64>, String) {
+    let v = v.trim().trim_start_matches(['v', 'V']);
+    let cut = v.find(|c: char| c == '-' || c == '+' || c.is_ascii_alphabetic()).unwrap_or(v.len());
+    let (rel, rest) = v.split_at(cut);
+    let nums = rel.split(|c: char| !c.is_ascii_digit()).filter(|s| !s.is_empty()).take(4).map(|s| s.parse().unwrap_or(0)).collect();
+    let pre = if rest.starts_with('+') { String::new() } else { rest.trim_start_matches('-').to_lowercase() };
+    (nums, pre)
 }
 
+/// Compare versions numerically; a pre-release (rc, beta, alpha...) sorts before its release.
 pub fn ver_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    let (x, y) = (parse_ver(a), parse_ver(b));
+    use std::cmp::Ordering::*;
+    let ((x, xp), (y, yp)) = (parse_ver(a), parse_ver(b));
     for i in 0..x.len().max(y.len()) {
         let o = x.get(i).unwrap_or(&0).cmp(y.get(i).unwrap_or(&0));
-        if o != std::cmp::Ordering::Equal {
+        if o != Equal {
             return o;
         }
     }
-    std::cmp::Ordering::Equal
+    match (xp.is_empty(), yp.is_empty()) {
+        (true, true) => Equal,
+        (true, false) => Greater,
+        (false, true) => Less,
+        (false, false) => xp.cmp(&yp),
+    }
 }
 
 fn vuln_applies(v: &serde_json::Value, ver: &str) -> bool {
@@ -233,12 +246,13 @@ fn vuln_applies(v: &serde_json::Value, ver: &str) -> bool {
 /// Server extensions the PHP code appears to need.
 pub fn requirements(root: &Path, rules: &Rules) -> Vec<Requirement> {
     let mut found: BTreeMap<String, Requirement> = BTreeMap::new();
-    for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()) {
+    for entry in WalkDir::new(root).sort_by_file_name().into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()) {
         let p = entry.path();
         if p.extension().map_or(true, |e| e != "php") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(p) else { continue };
+        let Ok(raw) = std::fs::read_to_string(p) else { continue };
+        let text = strip_comments(&raw);
         for (ext, pats) in &rules.extensions {
             if found.contains_key(ext) {
                 continue;
@@ -289,36 +303,107 @@ fn rule_ident(rule: &str) -> Option<String> {
     Some(s.to_lowercase())
 }
 
-/// Downgrade errors in code that only runs when the old feature exists, e.g.
+/// Remove PHP comments (/* */ blocks, // and # line comments, keeping #[attributes]) so that
+/// words inside comments never count as guards, alternatives or requirements. Line count is kept.
+pub fn strip_comments(text: &str) -> String {
+    let block = Regex::new(r"(?s)/\*.*?\*/").unwrap();
+    let no_blocks = block.replace_all(text, |c: &regex::Captures| "\n".repeat(c[0].matches('\n').count()));
+    let line_c = Regex::new(r"(^|[^:\\])//.*$|#[^\[].*$|#$").unwrap();
+    no_blocks.lines().map(|l| line_c.replace(l, "$1").to_string()).collect::<Vec<_>>().join("\n")
+}
+
+/// Downgrade errors in code that only runs when the old feature exists, e.g. code inside
 /// `if (function_exists('mcrypt_encrypt')) { ... }`, `extension_loaded('mysql')`, `defined('X')`,
-/// or an explicit PHP version check. Such code is skipped on new PHP, so it can't break there.
+/// or an explicit PHP version check. The guard must still be in scope at the finding: either on
+/// the same line, the next line of a braceless `if`, or inside a `{` block it opened that has not
+/// closed yet. Negated checks (`!function_exists(...)`) are not guards.
 /// Guarded findings become severity "info" (shown, but not counted in the verdict).
 pub fn apply_guards(root: &Path, findings: &mut [crate::model::Finding]) {
     let version_guard = Regex::new(r"(?i)(PHP_VERSION_ID\s*[<>]=?|version_compare\s*\(\s*(PHP_VERSION|phpversion\s*\(\s*\)))").unwrap();
     let mut cache: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for f in findings.iter_mut().filter(|f| f.severity == "error") {
         let lines = cache.entry(f.file.clone()).or_insert_with(|| {
-            std::fs::read_to_string(root.join(&f.file)).map(|t| t.lines().map(|l| l.to_lowercase()).collect()).unwrap_or_default()
+            std::fs::read_to_string(root.join(&f.file))
+                .map(|t| strip_comments(&t).lines().map(|l| l.to_lowercase()).collect())
+                .unwrap_or_default()
         });
         if lines.is_empty() || f.line == 0 {
             continue;
         }
-        let end = (f.line as usize).min(lines.len());
-        let start = end.saturating_sub(80);
-        let window = &lines[start..end];
-        let ident = rule_ident(&f.rule_id);
-        // Extension rules (e.g. "mcrypt") are guarded by checks for any function of that extension.
-        let guarded_by_ident = ident.as_ref().map_or(false, |id| {
-            let needle = regex::escape(id);
-            let re = Regex::new(&format!(
-                r#"(function_exists|extension_loaded|defined|is_callable|class_exists)\s*\(\s*['"]\\?{needle}"#
+        let target = (f.line as usize).min(lines.len()) - 1; // 0-based index of the finding line
+        let start = target.saturating_sub(80);
+        let ident_re = rule_ident(&f.rule_id).map(|id| {
+            Regex::new(&format!(
+                r#"(!\s*)?(function_exists|extension_loaded|defined|is_callable|class_exists)\s*\(\s*['"]\\?{}"#,
+                regex::escape(&id)
             ))
-            .unwrap();
-            window.iter().any(|l| re.is_match(l))
+            .unwrap()
         });
-        let near_start = end.saturating_sub(15);
-        let guarded_by_version = lines[near_start..end].iter().any(|l| version_guard.is_match(l));
-        if guarded_by_ident || guarded_by_version {
+        let mut guarded = false;
+        for i in (start..=target).rev() {
+            let line = &lines[i];
+            // Position just after a positive guard on this line, if any.
+            let mut after: Option<usize> = None;
+            if let Some(re) = &ident_re {
+                for c in re.captures_iter(line) {
+                    if c.get(1).is_none() {
+                        after = Some(c.get(0).unwrap().end());
+                    }
+                }
+            }
+            if after.is_none() && target - i <= 15 {
+                if let Some(m) = version_guard.find(line) {
+                    // A version check written as "!version_compare(...)" or "PHP_VERSION_ID <" both
+                    // select a branch; treat them as guards only when not negated with "!".
+                    let negated = line[..m.start()].trim_end().ends_with('!');
+                    if !negated {
+                        after = Some(m.end());
+                    }
+                }
+            }
+            let Some(pos) = after else { continue };
+            if i == target {
+                guarded = true; // same line: ternary or one-line if
+                break;
+            }
+            // Brace depth from the guard to the end of the line before the finding.
+            let mut depth: i64 = 0;
+            let mut opened = false;
+            let mut statement_ended = false;
+            for (k, l) in lines.iter().enumerate().take(target).skip(i) {
+                let seg = if k == i { &l[pos.min(l.len())..] } else { l.as_str() };
+                for ch in seg.chars() {
+                    match ch {
+                        '{' => {
+                            depth += 1;
+                            opened = true;
+                        }
+                        '}' => depth -= 1,
+                        ';' if !opened => statement_ended = true,
+                        _ => {}
+                    }
+                }
+                if opened && depth <= 0 {
+                    break;
+                }
+            }
+            let braceless_next = !opened && target == i + 1 && !lines[i].trim_end().ends_with(';');
+            // Same expression: `defined('X') && ... X ...` spanning lines, no `;` or `{` in between.
+            let same_expression = !opened && !statement_ended;
+            if (opened && depth > 0) || braceless_next || same_expression {
+                guarded = true;
+            }
+            break; // only the nearest guard is considered
+        }
+        // Newer PHP features (NewConstants, NewFunctions, NewClasses...) with positive feature
+        // detection for that exact name anywhere in the same file: the library selects this path
+        // only when the feature exists (e.g. `case defined('X'):` in an engine switch).
+        if !guarded && f.rule_id.contains(".New") {
+            if let Some(re) = &ident_re {
+                guarded = lines.iter().any(|l| re.captures_iter(l).any(|c| c.get(1).is_none()));
+            }
+        }
+        if guarded {
             f.severity = "info".into();
             f.confidence = "low".into();
             f.message = format!("Guarded (only runs when the old feature is available, so it is skipped on newer PHP): {}", f.message);
@@ -332,6 +417,9 @@ const FALLBACKS: &[(&str, &[&str])] = &[
     ("mcrypt", &["openssl_", "sodium_"]), // removed in PHP 7.2
     ("mdecrypt", &["openssl_", "sodium_"]), // mcrypt function with a different prefix
     ("ereg", &["preg_"]),              // removed in PHP 7.0
+    ("eregi", &["preg_"]),             // removed in PHP 7.0
+    ("split", &["preg_split", "explode"]), // removed in PHP 7.0
+    ("spliti", &["preg_split"]),       // removed in PHP 7.0
 ];
 
 /// Second pass for removed extensions: code written with a modern alternative alongside the old
@@ -349,7 +437,7 @@ pub fn apply_fallbacks(root: &Path, findings: &mut [crate::model::Finding]) {
         let guard = Regex::new(&format!(r#"(function_exists|extension_loaded|is_callable)\s*\(\s*['"]\\?{ext}"#)).unwrap();
         let text = file_cache
             .entry(f.file.clone())
-            .or_insert_with(|| std::fs::read_to_string(root.join(&f.file)).unwrap_or_default().to_lowercase());
+            .or_insert_with(|| strip_comments(&std::fs::read_to_string(root.join(&f.file)).unwrap_or_default()).to_lowercase());
         let in_file = guard.is_match(text) || alts.iter().any(|a| text.contains(a));
         if in_file {
             f.severity = "info".into();
@@ -359,9 +447,9 @@ pub fn apply_fallbacks(root: &Path, findings: &mut [crate::model::Finding]) {
         }
         let pkg = package_text.get_or_insert_with(|| {
             let mut s = String::new();
-            for e in WalkDir::new(root).into_iter().filter_map(|e| e.ok()).filter(|e| e.path().extension().map_or(false, |x| x == "php")) {
+            for e in WalkDir::new(root).sort_by_file_name().into_iter().filter_map(|e| e.ok()).filter(|e| e.path().extension().map_or(false, |x| x == "php")) {
                 if let Ok(t) = std::fs::read_to_string(e.path()) {
-                    s.push_str(&t.to_lowercase());
+                    s.push_str(&strip_comments(&t).to_lowercase());
                 }
             }
             s

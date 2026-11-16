@@ -11,6 +11,10 @@ const DEADLINE: &str = "2026-12-31T23:59:59Z";
 const MAIN_TARGET: &str = "php:8.4";
 const TARGETS: [&str; 3] = ["php:8.3", "php:8.4", "php:8.5"];
 const MAX_ROWS: usize = 50;
+/// Editorial guides (front matter + Markdown), relative to the working directory.
+const GUIDES_DIR: &str = "content/guides";
+/// The library index stays noindex until the dataset is big enough to be useful on its own.
+const LIBRARY_INDEX_MIN_PLUGINS: usize = 100;
 
 pub fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
@@ -92,6 +96,7 @@ th{color:var(--mut);font-weight:600}.scroll{overflow-x:auto}code{font-size:13px;
 input[type=search]{width:100%;padding:12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-size:16px}
 footer{margin-top:48px;border-top:1px solid var(--line);padding-top:16px;font-size:13px;color:var(--mut)}
 details summary{cursor:pointer;font-weight:600}
+.guide code{word-break:normal;overflow-wrap:anywhere}.lib{border-bottom:1px solid var(--line);padding:4px 0 8px}.lib h3{margin:12px 0 0;overflow-wrap:anywhere}.lib ul{margin:6px 0;padding-left:20px}
 "#;
 
 fn page(title: &str, desc: &str, canonical: &str, noindex: bool, jsonld: &str, body: &str) -> String {
@@ -100,7 +105,7 @@ fn page(title: &str, desc: &str, canonical: &str, noindex: bool, jsonld: &str, b
 <title>{t}</title><meta name=\"description\" content=\"{d}\"><link rel=\"canonical\" href=\"{c}\">{robots}\
 <meta property=\"og:title\" content=\"{t}\"><meta property=\"og:description\" content=\"{d}\"><meta property=\"og:type\" content=\"website\">\
 <style>{css}</style>{jsonld}</head><body><div class=\"wrap\">\
-<header class=\"top\"><a class=\"brand\" href=\"/\">Leap<span>Check</span></a><nav class=\"small\"><a href=\"/plugins/\">Plugins</a> · <a href=\"/about/how-we-scan/\">How we scan</a> · <a href=\"https://github.com/agkartikey575/leapcheck\">Open source</a></nav></header>\
+<header class=\"top\"><a class=\"brand\" href=\"/\">Leap<span>Check</span></a><nav class=\"small\"><a href=\"/plugins/\">Plugins</a> · <a href=\"/libraries/\">Libraries</a> · <a href=\"/guides/\">Guides</a> · <a href=\"/about/how-we-scan/\">How we scan</a> · <a href=\"https://github.com/agkartikey575/leapcheck\">Open source</a></nav></header>\
 {body}\
 <footer>LeapCheck checks public plugin code for PHP version compatibility with open-source static analysis. Results are automated and are not a guarantee. \
 LeapCheck is not affiliated with WordPress, the WordPress Foundation or any plugin author; names are trademarks of their owners. \
@@ -243,7 +248,7 @@ fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
     if !p.components.is_empty() {
         let _ = write!(b, "<h2>Hidden libraries bundled inside</h2><p>Plugins often ship their own copies of other libraries. Old copies are a common reason sites break during PHP upgrades.</p><div class=\"scroll\"><table><tr><th>Library</th><th>Version</th><th>Location</th><th>Known vulnerabilities</th></tr>");
         for (n, v, path, det, vul) in &p.components {
-            let _ = write!(b, "<tr><td>{}</td><td>{}</td><td><code>{}</code></td><td>{}</td></tr>", esc(n), esc(v.as_deref().unwrap_or("unknown")), esc(path),
+            let _ = write!(b, "<tr><td><a href=\"/libraries/#{}\">{}</a></td><td>{}</td><td><code>{}</code></td><td>{}</td></tr>", lib_anchor(n), esc(n), esc(v.as_deref().unwrap_or("unknown")), esc(path),
                 if *vul > 0 { format!("{vul} (per <a href=\"https://github.com/RetireJS/retire.js\">RetireJS</a> data)") } else if det == "retirejs" { "None known".into() } else { "—".into() });
         }
         let _ = write!(b, "</table></div>");
@@ -285,6 +290,375 @@ fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
     (page(&title, &desc, &canonical, !index, &jsonld, &b), index)
 }
 
+// ---------------------------------------------------------------------------------------------
+// Markdown: a deliberately small, safe subset. Everything not recognised is escaped as text;
+// raw HTML is never passed through, and links are limited to http(s), site-relative and anchors.
+// ---------------------------------------------------------------------------------------------
+
+/// Return the URL if it is safe to link to: http(s), site-relative, relative path or anchor.
+fn safe_url(u: &str) -> Option<&str> {
+    let u = u.trim();
+    if u.is_empty() || u.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return None;
+    }
+    let lower = u.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return Some(u);
+    }
+    if u.starts_with("//") || u.starts_with('\\') {
+        return None; // protocol-relative or odd: refuse
+    }
+    // Relative: there must be no scheme, i.e. no ':' before the first '/', '?' or '#'.
+    let head = u.split(['/', '?', '#']).next().unwrap_or("");
+    if head.contains(':') { None } else { Some(u) }
+}
+
+/// Find `pat` in `s` starting at byte `from`, returning its byte index.
+fn find_from(s: &str, from: usize, pat: &str) -> Option<usize> {
+    s.get(from..)?.find(pat).map(|i| i + from)
+}
+
+/// Index of the ')' closing a link destination that starts at `from`, allowing balanced parentheses.
+fn paren_end(s: &str, from: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, b) in s.bytes().enumerate().skip(from) {
+        match b {
+            b'(' => depth += 1,
+            b')' if depth == 0 => return Some(i),
+            b')' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Inline Markdown:`code`, **bold**, *italic* / _italic_, [text](url). Everything else is escaped.
+fn md_inline(s: &str, allow_links: bool) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < s.len() {
+        let rest = &s[i..];
+        let c = rest.chars().next().unwrap_or(' ');
+        if c == '\\' {
+            if let Some(n) = rest[1..].chars().next() {
+                if "\\`*_[]()#-.!".contains(n) {
+                    out.push_str(&esc(&n.to_string()));
+                    i += 1 + n.len_utf8();
+                    continue;
+                }
+            }
+        }
+        if c == '`' {
+            if let Some(end) = find_from(s, i + 1, "`") {
+                let _ = write!(out, "<code>{}</code>", esc(&s[i + 1..end]));
+                i = end + 1;
+                continue;
+            }
+        }
+        if rest.starts_with("**") {
+            if let Some(end) = find_from(s, i + 2, "**") {
+                if end > i + 2 {
+                    let _ = write!(out, "<strong>{}</strong>", md_inline(&s[i + 2..end], allow_links));
+                    i = end + 2;
+                    continue;
+                }
+            }
+        }
+        if c == '*' || c == '_' {
+            let delim = if c == '*' { "*" } else { "_" };
+            // Opening delimiter must be followed by non-space; '_' only at a word start.
+            let prev_alnum = s[..i].chars().last().map_or(false, |p| p.is_alphanumeric());
+            let next_ok = rest[1..].chars().next().map_or(false, |n| !n.is_whitespace());
+            if next_ok && !(c == '_' && prev_alnum) {
+                if let Some(end) = find_from(s, i + 1, delim) {
+                    let before_ok = s[..end].chars().last().map_or(false, |p| !p.is_whitespace());
+                    if end > i + 1 && before_ok {
+                        let _ = write!(out, "<em>{}</em>", md_inline(&s[i + 1..end], allow_links));
+                        i = end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        if c == '[' && allow_links {
+            if let Some(close) = find_from(s, i + 1, "](") {
+                if let Some(end) = paren_end(s, close + 2) {
+                    let text = &s[i + 1..close];
+                    let url = &s[close + 2..end];
+                    if !text.is_empty() && !text.contains('[') {
+                        let inner = md_inline(text, false);
+                        match safe_url(url) {
+                            Some(u) => {
+                                let ext = u.to_ascii_lowercase().starts_with("http");
+                                let _ = write!(out, "<a href=\"{}\"{}>{}</a>", esc(u), if ext { " rel=\"noopener\"" } else { "" }, inner);
+                            }
+                            None => out.push_str(&inner), // unsafe scheme: keep the text, drop the link
+                        }
+                        i = end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push_str(&esc(&c.to_string()));
+        i += c.len_utf8();
+    }
+    out
+}
+
+fn ordered_item(l: &str) -> Option<&str> {
+    let digits = l.bytes().take_while(|b| b.is_ascii_digit()).count();
+    if digits == 0 || digits > 9 {
+        return None;
+    }
+    l[digits..].strip_prefix(". ").or_else(|| l[digits..].strip_prefix(") "))
+}
+
+/// Block-level Markdown: ##/### headings, paragraphs, "-"/"*" and "1." lists.
+/// A single "#" heading is demoted to h2 because the page already has the front-matter h1.
+pub fn markdown(src: &str) -> String {
+    #[derive(PartialEq)]
+    enum Open { None, Para, Ul, Ol }
+    let mut out = String::new();
+    let mut open = Open::None;
+    let mut buf: Vec<String> = vec![]; // paragraph lines or the current list item
+    let mut item_open = false;
+    let flush = |out: &mut String, open: &mut Open, buf: &mut Vec<String>, item_open: &mut bool| {
+        let text = buf.join(" ");
+        match open {
+            Open::Para => { let _ = write!(out, "<p>{}</p>\n", md_inline(&text, true)); }
+            Open::Ul | Open::Ol => {
+                if *item_open { let _ = write!(out, "<li>{}</li>", md_inline(&text, true)); }
+                out.push_str(if *open == Open::Ul { "</ul>\n" } else { "</ol>\n" });
+            }
+            Open::None => {}
+        }
+        buf.clear();
+        *item_open = false;
+        *open = Open::None;
+    };
+    for raw in src.lines() {
+        let line = raw.trim_end();
+        let t = line.trim_start();
+        if t.is_empty() {
+            flush(&mut out, &mut open, &mut buf, &mut item_open);
+            continue;
+        }
+        let heading = [("### ", "h3"), ("## ", "h2"), ("# ", "h2")].into_iter().find(|(p, _)| t.starts_with(p));
+        if let Some((p, tag)) = heading {
+            flush(&mut out, &mut open, &mut buf, &mut item_open);
+            let _ = write!(out, "<{tag}>{}</{tag}>\n", md_inline(t[p.len()..].trim().trim_end_matches('#').trim_end(), true));
+            continue;
+        }
+        if t.starts_with("####") {
+            flush(&mut out, &mut open, &mut buf, &mut item_open);
+            let _ = write!(out, "<h3>{}</h3>\n", md_inline(t.trim_start_matches('#').trim(), true));
+            continue;
+        }
+        let ul = t.strip_prefix("- ").or_else(|| t.strip_prefix("* "));
+        let ol = ordered_item(t);
+        let kind = if ul.is_some() { Open::Ul } else if ol.is_some() { Open::Ol } else { Open::None };
+        if kind != Open::None {
+            let content = ul.or(ol).unwrap_or("").trim();
+            if open != kind {
+                flush(&mut out, &mut open, &mut buf, &mut item_open);
+                out.push_str(if kind == Open::Ul { "<ul>" } else { "<ol>" });
+                open = kind;
+            } else if item_open {
+                let _ = write!(out, "<li>{}</li>", md_inline(&buf.join(" "), true));
+                buf.clear();
+            }
+            buf.push(content.to_string());
+            item_open = true;
+            continue;
+        }
+        // Plain text: continues the current paragraph or list item (lazy continuation).
+        if open == Open::None {
+            open = Open::Para;
+        }
+        buf.push(t.to_string());
+    }
+    flush(&mut out, &mut open, &mut buf, &mut item_open);
+    out
+}
+
+struct Guide {
+    slug: String,
+    title: String,
+    description: String,
+    h1: String,
+    updated: String,
+    body: String,
+}
+
+/// Parse "---\nkey: value\n---\nmarkdown". Values may be wrapped in single or double quotes.
+fn parse_guide(slug: &str, src: &str) -> Option<Guide> {
+    let src = src.strip_prefix('\u{feff}').unwrap_or(src);
+    let mut lines = src.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    let mut meta: BTreeMap<String, String> = BTreeMap::new();
+    let mut closed = false;
+    for l in lines.by_ref() {
+        if l.trim() == "---" {
+            closed = true;
+            break;
+        }
+        if let Some((k, v)) = l.split_once(':') {
+            let v = v.trim();
+            let v = v.strip_prefix('"').and_then(|x| x.strip_suffix('"'))
+                .or_else(|| v.strip_prefix('\'').and_then(|x| x.strip_suffix('\''))).unwrap_or(v);
+            meta.insert(k.trim().to_ascii_lowercase(), v.to_string());
+        }
+    }
+    if !closed {
+        return None;
+    }
+    let body: Vec<&str> = lines.collect();
+    let title = meta.get("title").cloned().unwrap_or_default();
+    if title.is_empty() {
+        return None;
+    }
+    Some(Guide {
+        slug: slug.to_string(),
+        h1: meta.get("h1").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| title.clone()),
+        description: meta.get("description").cloned().unwrap_or_default(),
+        updated: meta.get("updated").cloned().unwrap_or_default(),
+        title,
+        body: body.join("\n"),
+    })
+}
+
+fn load_guides(dir: &Path) -> Vec<Guide> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
+    let mut gs = vec![];
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("md") {
+            continue;
+        }
+        let Some(slug) = p.file_stem().and_then(|x| x.to_str()).map(|s| s.to_ascii_lowercase()) else { continue };
+        let valid = !slug.is_empty() && slug.len() <= 100 && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && !slug.starts_with('-');
+        if !valid {
+            eprintln!("{}", serde_json::json!({"level": "warn", "step": "site", "msg": "skipping guide with invalid file name", "attrs": {"file": p.display().to_string()}}));
+            continue;
+        }
+        match std::fs::read_to_string(&p).ok().and_then(|s| parse_guide(&slug, &s)) {
+            Some(g) => gs.push(g),
+            None => eprintln!("{}", serde_json::json!({"level": "warn", "step": "site", "msg": "skipping guide without valid front matter (needs --- title ---)", "attrs": {"file": p.display().to_string()}})),
+        }
+    }
+    gs.sort_by(|a, b| a.slug.cmp(&b.slug));
+    gs
+}
+
+/// A valid ISO date (YYYY-MM-DD) prefix of `s`, for sitemap lastmod; otherwise empty.
+fn iso_date(s: &str) -> String {
+    let d = s.get(..10).unwrap_or("");
+    let ok = d.len() == 10 && d.bytes().enumerate().all(|(i, b)| if i == 4 || i == 7 { b == b'-' } else { b.is_ascii_digit() });
+    if ok { d.to_string() } else { String::new() }
+}
+
+fn guide_page(g: &Guide, base: &str) -> String {
+    let canonical = format!("{base}/guides/{}/", g.slug);
+    let mut b = String::new();
+    let _ = write!(b, "<p class=\"small\"><a href=\"/\">Home</a> › <a href=\"/guides/\">Guides</a> › {}</p><article class=\"guide\"><h1>{}</h1>", esc(&g.h1), esc(&g.h1));
+    if !g.updated.is_empty() {
+        let _ = write!(b, "<p class=\"small\">Last updated {}</p>", esc(&g.updated));
+    }
+    b.push_str(&markdown(&g.body));
+    b.push_str("</article><div class=\"card\"><b>Check your whole site at once.</b> The free LeapCheck plugin checks every plugin and theme you have installed against PHP 8.3, 8.4 and 8.5. <p><a class=\"cta\" href=\"https://github.com/agkartikey575/leapcheck\">Get LeapCheck</a></p></div>");
+    let mut article = serde_json::json!({"@type": "Article", "headline": g.h1, "description": g.description, "url": canonical,
+        "publisher": {"@type": "Organization", "name": "LeapCheck"}});
+    let d = iso_date(&g.updated);
+    if !d.is_empty() {
+        article["dateModified"] = serde_json::json!(d);
+    }
+    let jsonld = format!("<script type=\"application/ld+json\">{}</script>", serde_json::json!({
+        "@context": "https://schema.org",
+        "@graph": [article, {"@type": "BreadcrumbList", "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": "Home", "item": format!("{base}/")},
+            {"@type": "ListItem", "position": 2, "name": "Guides", "item": format!("{base}/guides/")},
+            {"@type": "ListItem", "position": 3, "name": g.h1, "item": canonical}]}]
+    }).to_string().replace("</", "<\\/"));
+    page(&g.title, &g.description, &canonical, false, &jsonld, &b)
+}
+
+/// The guide about PHP 8.2 reaching end of life, if the editors have written one.
+fn eol_guide(gs: &[Guide]) -> Option<&Guide> {
+    gs.iter().find(|g| (g.slug.contains("8-2") || g.slug.contains("82")) && (g.slug.contains("end-of-life") || g.slug.contains("eol")))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Library index: every bundled library across the latest scanned version of every plugin.
+// ---------------------------------------------------------------------------------------------
+
+fn lib_anchor(name: &str) -> String {
+    let mut a = String::from("lib-");
+    for c in name.chars() {
+        a.push(if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' });
+    }
+    a
+}
+
+#[derive(Default)]
+struct LibVersion {
+    plugins: BTreeMap<String, String>, // slug -> display name
+    vulns: i64,
+    vuln_checked: bool, // true when the version was matched against RetireJS data
+}
+
+fn library_page(pkgs: &[Pkg], base: &str) -> (String, bool) {
+    let mut libs: BTreeMap<String, BTreeMap<String, LibVersion>> = BTreeMap::new();
+    for p in pkgs {
+        for (n, v, _path, det, vul) in &p.components {
+            let lv = libs.entry(n.clone()).or_default().entry(v.clone().unwrap_or_else(|| "unknown".into())).or_default();
+            lv.plugins.insert(p.slug.clone(), p.display.clone());
+            lv.vulns = lv.vulns.max(*vul);
+            lv.vuln_checked |= det == "retirejs";
+        }
+    }
+    let plugin_count = |vs: &BTreeMap<String, LibVersion>| vs.values().flat_map(|lv| lv.plugins.keys()).collect::<std::collections::BTreeSet<_>>().len();
+    let mut order: Vec<(&String, &BTreeMap<String, LibVersion>)> = libs.iter().collect();
+    order.sort_by(|a, b| plugin_count(b.1).cmp(&plugin_count(a.1)).then(a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+    let with_vulns = libs.values().filter(|vs| vs.values().any(|lv| lv.vulns > 0)).count();
+    let index = pkgs.len() >= LIBRARY_INDEX_MIN_PLUGINS;
+    let canonical = format!("{base}/libraries/");
+
+    let mut b = String::new();
+    let _ = write!(b, "<p class=\"small\"><a href=\"/\">Home</a> › Libraries</p><h1>Hidden libraries inside WordPress plugins</h1>\
+<p class=\"lead\">Plugins often ship their own copies of other libraries. Old copies are a common reason sites break during PHP upgrades, and some carry known vulnerabilities. \
+We found <b>{}</b> different libraries bundled in the latest scanned version of {} plugins; <b>{with_vulns}</b> of them have at least one copy with known vulnerabilities.</p>\
+<p class=\"small\">Found by package manifests, file signatures and <a href=\"https://github.com/RetireJS/retire.js\">RetireJS</a> open data. Vulnerability counts come from RetireJS data and are only available for JavaScript libraries; no count shown means not checked, not “safe”. <a href=\"/about/how-we-scan/\">How we scan</a></p>",
+        libs.len(), pkgs.len());
+    if libs.is_empty() {
+        b.push_str("<p>No bundled libraries found yet.</p>");
+    } else {
+        // One block per library (readable on phones), one line per version seen.
+        for (name, versions) in &order {
+            let mut vs: Vec<(&String, &LibVersion)> = versions.iter().collect();
+            vs.sort_by(|a, b| crate::detect::ver_cmp(b.0, a.0));
+            let pc = plugin_count(versions);
+            let _ = write!(b, "<section class=\"lib\" id=\"{}\"><h3>{}</h3><p class=\"small\">Bundled by {pc} plugin{}, {} version{} seen</p><ul>",
+                lib_anchor(name), esc(name), if pc == 1 { "" } else { "s" }, vs.len(), if vs.len() == 1 { "" } else { "s" });
+            for (v, lv) in &vs {
+                let plugins: Vec<String> = lv.plugins.iter().map(|(s, d)| format!("<a href=\"/plugins/{}/\">{}</a>", esc(s), esc(d))).collect();
+                let vul = if lv.vulns > 0 {
+                    format!(" <span class=\"chip bad\">{} known vulnerabilit{}</span>", lv.vulns, if lv.vulns == 1 { "y" } else { "ies" })
+                } else if lv.vuln_checked { " <span class=\"small\">(no known vulnerabilities)</span>".into() } else { String::new() };
+                let _ = write!(b, "<li><b>Version {}</b>: {}{vul}</li>", esc(v), plugins.join(", "));
+            }
+            b.push_str("</ul></section>");
+        }
+    }
+    let _ = write!(b, "<p class=\"small\">Library names are as detected and may be trademarks of their owners. A library listed here is not necessarily used in a vulnerable way by the plugin.</p>");
+    let title = "Hidden libraries bundled in WordPress plugins | LeapCheck";
+    let desc = format!("{} libraries found bundled inside {} scanned WordPress plugins, with versions, which plugins ship them and known vulnerabilities.", libs.len(), pkgs.len());
+    (page(title, &desc, &canonical, !index, "", &b), index)
+}
+
 fn write(out: &Path, rel: &str, content: &str) -> Result<()> {
     let p = out.join(rel);
     if let Some(d) = p.parent() {
@@ -317,6 +691,35 @@ pub fn generate(rules: &Path, out: &Path, base: &str) -> Result<usize> {
     write(out, "plugins/index.html", &page("WordPress plugin PHP 8.4 compatibility results | LeapCheck", "Which WordPress plugins work on PHP 8.3, 8.4 and 8.5? Automated static scans of public plugin code, with files, lines and fixes.", &format!("{base}/plugins/"), false, "", &list))?;
     n += 1;
 
+    // Guides (editorial Markdown); a missing folder simply means no guides yet.
+    let guides = load_guides(Path::new(GUIDES_DIR));
+    let mut glist = String::new();
+    for g in &guides {
+        write(out, &format!("guides/{}/index.html", g.slug), &guide_page(g, base))?;
+        n += 1;
+        sitemap.push((format!("{base}/guides/{}/", g.slug), iso_date(&g.updated)));
+        let _ = write!(glist, "<li><a href=\"/guides/{}/\"><b>{}</b></a>{}</li>", esc(&g.slug), esc(&g.h1),
+            if g.description.is_empty() { String::new() } else { format!("<br><span class=\"small\">{}</span>", esc(&g.description)) });
+    }
+    let gbody = if guides.is_empty() {
+        "<h1>Guides</h1><p class=\"lead\">Plain-language guides to upgrading PHP on your WordPress site are coming soon.</p>".to_string()
+    } else {
+        format!("<h1>Guides</h1><p class=\"lead\">Plain-language guides to upgrading PHP on your WordPress site safely.</p><ul>{glist}</ul>")
+    };
+    write(out, "guides/index.html", &page("PHP upgrade guides for WordPress sites | LeapCheck", "Plain-language guides to PHP 8.2 end of life and upgrading your WordPress site to PHP 8.3, 8.4 and 8.5 safely.", &format!("{base}/guides/"), guides.is_empty(), "", &gbody))?;
+    n += 1;
+    if !guides.is_empty() {
+        sitemap.push((format!("{base}/guides/"), String::new()));
+    }
+
+    // Library index
+    let (lib_html, lib_index) = library_page(&pkgs, base);
+    write(out, "libraries/index.html", &lib_html)?;
+    n += 1;
+    if lib_index {
+        sitemap.push((format!("{base}/libraries/"), String::new()));
+    }
+
     // Home
     let counts = pkgs.iter().fold([0usize; 4], |mut c, p| {
         match p.targets.get(MAIN_TARGET).map(|t| t.verdict.as_str()).unwrap_or("unknown") {
@@ -329,7 +732,7 @@ pub fn generate(rules: &Path, out: &Path, base: &str) -> Result<usize> {
     });
     let home = format!(r#"<h1>Check before you leap.</h1>
 <p class="lead">PHP 8.2 stops getting security fixes on 31 December 2026, and hosts are moving sites to newer PHP. LeapCheck tells you which of your plugins will break on PHP 8.3, 8.4 and 8.5, before you upgrade, including old libraries hidden inside them.</p>
-<div class="card"><div class="small">PHP 8.2 security support ends in</div><div class="count" id="cd">…</div></div>
+<div class="card"><div class="small">PHP 8.2 security support ends in</div><div class="count" id="cd">…</div>{eol}</div>
 <div class="card"><label for="q"><b>Is your plugin ready?</b> Type its WordPress.org slug (the folder name, e.g. <code>contact-form-7</code>)</label><p><input type="search" id="q" placeholder="plugin-slug" autocomplete="off"></p><div id="res" class="small"></div></div>
 <h2>What we've checked so far</h2><p>{total} plugins scanned for PHP 8.4: <b>{c0}</b> compatible, <b>{c1}</b> run with warnings, <b>{c2}</b> have errors, <b>{c3}</b> couldn't be scanned. <a href="/plugins/">See all results</a></p>
 <div class="card"><b>Check your whole site at once.</b> The free LeapCheck plugin checks every plugin and theme you have installed. It only looks up public plugin names and versions, only after you agree, and sends nothing about your site.<p><a class="cta" href="https://github.com/agkartikey575/leapcheck">Get LeapCheck</a></p></div>
@@ -339,6 +742,7 @@ var q=document.getElementById("q"),r=document.getElementById("res"),tm;q.addEven
 function go(){{var s=q.value.trim().toLowerCase();if(!/^[a-z0-9][a-z0-9-]{{0,199}}$/.test(s)){{r.textContent="";return;}}
 fetch("/v1/wordpress-plugin/"+s+"/index.json").then(function(x){{if(!x.ok)throw 0;return x.json();}}).then(function(i){{r.innerHTML='Found: <a href="/plugins/'+s+'/">'+s+' (version '+i.latest+')</a>';}}).catch(function(){{r.textContent="Not in our database yet. Popular plugins are added first; check back soon.";}});}}}})();
 </script>"#,
+        eol = eol_guide(&guides).map(|g| format!("<p class=\"small\"><a href=\"/guides/{}/\">What PHP 8.2 end of life means for your site</a></p>", esc(&g.slug))).unwrap_or_default(),
         total = pkgs.len(), c0 = counts[0], c1 = counts[1], c2 = counts[2], c3 = counts[3]);
     write(out, "index.html", &page("Will your WordPress site break on PHP 8.4? | LeapCheck", "Check which plugins break on PHP 8.3, 8.4 and 8.5 before PHP 8.2 support ends on 31 Dec 2026. Free, automated, open source.", &format!("{base}/"), false, "", &home))?;
     n += 1;
@@ -400,4 +804,38 @@ fetch("/v1/wordpress-plugin/"+s+"/index.json").then(function(x){{if(!x.ok)throw 
 "#)?;
     n += 4;
     Ok(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_blocks_and_inline() {
+        let h = markdown("Intro **b** *i* `c<>` [x](/plugins/).\n\n## Head\n- one\n- two\n\n1. a\n2. b\n### Sub");
+        assert!(h.contains("<p>Intro <strong>b</strong> <em>i</em> <code>c&lt;&gt;</code> <a href=\"/plugins/\">x</a>.</p>"));
+        assert!(h.contains("<h2>Head</h2>"));
+        assert!(h.contains("<ul><li>one</li><li>two</li></ul>"));
+        assert!(h.contains("<ol><li>a</li><li>b</li></ol>"));
+        assert!(h.contains("<h3>Sub</h3>"));
+    }
+
+    #[test]
+    fn markdown_is_safe() {
+        let h = markdown("<script>alert(1)</script> [a](javascript:alert(1)) [b](JaVaScRiPt:x) [c](data:text/html,x) [d](//evil.example) [e](https://ok.example/?q=\"><x>)");
+        assert!(!h.contains("<script"));
+        assert!(!h.to_lowercase().contains("javascript:"));
+        assert!(!h.contains("data:"));
+        assert!(!h.contains("//evil"));
+        assert!(h.contains("href=\"https://ok.example/?q=&quot;&gt;&lt;x&gt;\""));
+    }
+
+    #[test]
+    fn front_matter() {
+        let g = parse_guide("x", "---\ntitle: \"T: x\"\ndescription: D\nh1: H\nupdated: 2026-11-16\n---\nBody").unwrap();
+        assert_eq!((g.title.as_str(), g.h1.as_str(), g.updated.as_str(), g.body.as_str()), ("T: x", "H", "2026-11-16", "Body"));
+        assert!(parse_guide("x", "no front matter").is_none());
+        assert_eq!(iso_date("2026-11-16"), "2026-11-16");
+        assert_eq!(iso_date("soon"), "");
+    }
 }

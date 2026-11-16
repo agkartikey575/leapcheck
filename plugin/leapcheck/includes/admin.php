@@ -134,7 +134,7 @@ function leapcheck_action_button( $action, $label, $class = 'button' ) {
 /**
  * Icon and label for a verdict.
  *
- * @param string $verdict compatible|issues|breaks|unknown|missing|error.
+ * @param string $verdict compatible|issues|breaks|unknown|missing|pending|error.
  * @return string[] array( icon, label )
  */
 function leapcheck_verdict_label( $verdict ) {
@@ -149,6 +149,8 @@ function leapcheck_verdict_label( $verdict ) {
 			return array( '❓', __( 'Could not be scanned', 'leapcheck' ) );
 		case 'missing':
 			return array( '❓', __( 'Not in database yet', 'leapcheck' ) );
+		case 'pending':
+			return array( '⏳', __( 'Not checked yet', 'leapcheck' ) );
 		default:
 			return array( '❓', __( 'Could not be fetched', 'leapcheck' ) );
 	}
@@ -199,8 +201,18 @@ function leapcheck_render_page() {
 	foreach ( $items as $item ) {
 		$rows[] = array(
 			'item'   => $item,
-			'record' => $consent ? leapcheck_get_result( $item ) : array( 'status' => 'none' ),
+			'record' => array( 'status' => 'none' ),
 		);
+	}
+	if ( $consent ) {
+		// Items in use first, so the per-page fetch limit is spent where the answer depends on it.
+		foreach ( array( true, false ) as $pass ) {
+			foreach ( $rows as $i => $row ) {
+				if ( $row['item']['active'] === $pass ) {
+					$rows[ $i ]['record'] = leapcheck_get_result( $row['item'] );
+				}
+			}
+		}
 	}
 	?>
 	<div class="wrap leapcheck">
@@ -219,7 +231,9 @@ function leapcheck_render_page() {
 
 		<?php
 		if ( $consent ) {
+			leapcheck_render_pending( $rows );
 			leapcheck_render_summary( $rows );
+			leapcheck_render_conflicts( $rows );
 		} else {
 			leapcheck_render_consent( $items );
 		}
@@ -260,6 +274,7 @@ function leapcheck_render_consent( array $items ) {
 		<p><?php esc_html_e( 'LeapCheck has scanned public WordPress.org plugins and themes for PHP 8.3, 8.4 and 8.5 problems. To show you the results, this site needs to download one public result file per plugin and theme from the LeapCheck server. Nothing is downloaded until you agree.', 'leapcheck' ); ?></p>
 		<ul class="leapcheck-list">
 			<li><?php esc_html_e( 'Only the plugin or theme folder name and its version number are used, as part of the file address.', 'leapcheck' ); ?></li>
+			<li><?php esc_html_e( 'If your exact version is not in the database, the list of scanned versions for that plugin or theme and the result of the closest version are downloaded the same way.', 'leapcheck' ); ?></li>
 			<li><?php esc_html_e( 'These are plain downloads of public files. No site data is sent: no site address, no user data, no content, no settings.', 'leapcheck' ); ?></li>
 			<li><?php esc_html_e( 'Results are stored on this site for 12 hours. You can turn this off at any time, which also deletes the stored results.', 'leapcheck' ); ?></li>
 		</ul>
@@ -301,7 +316,7 @@ function leapcheck_render_summary( array $rows ) {
 					case 'unchecked':
 						$icon = '❓';
 						/* translators: 1: PHP version */
-						$text = sprintf( __( 'Safe to upgrade to PHP %1$s? No known problems, but not everything could be checked.', 'leapcheck' ), $target );
+						$text = sprintf( __( 'Safe to upgrade to PHP %1$s? Can\'t fully tell: not everything in use could be checked exactly. See the list below.', 'leapcheck' ), $target );
 						break;
 					case 'compatible':
 						$icon = '✅';
@@ -317,15 +332,10 @@ function leapcheck_render_summary( array $rows ) {
 				<li class="leapcheck-summary--<?php echo esc_attr( $sum['state'] ); ?>">
 					<span aria-hidden="true"><?php echo esc_html( $icon ); ?></span>
 					<strong><?php echo esc_html( $text ); ?></strong>
-					<?php if ( $sum['unchecked'] > 0 && 'unchecked' !== $sum['state'] ) : ?>
+					<?php if ( $sum['unchecked'] > 0 ) : ?>
 						<?php
 						/* translators: %d: number of items */
-						echo esc_html( sprintf( _n( '(%d item could not be checked.)', '(%d items could not be checked.)', $sum['unchecked'], 'leapcheck' ), $sum['unchecked'] ) );
-						?>
-					<?php elseif ( 'unchecked' === $sum['state'] ) : ?>
-						<?php
-						/* translators: %d: number of items */
-						echo esc_html( sprintf( _n( '(%d item is not in the database yet or could not be fetched.)', '(%d items are not in the database yet or could not be fetched.)', $sum['unchecked'], 'leapcheck' ), $sum['unchecked'] ) );
+						echo esc_html( sprintf( _n( '(%d item in use could not be checked exactly.)', '(%d items in use could not be checked exactly.)', $sum['unchecked'], 'leapcheck' ), $sum['unchecked'] ) );
 						?>
 					<?php endif; ?>
 					<?php if ( version_compare( PHP_VERSION, $target, '>=' ) ) : ?>
@@ -336,7 +346,116 @@ function leapcheck_render_summary( array $rows ) {
 			}
 			?>
 		</ul>
-		<p class="description"><?php esc_html_e( 'The summary counts active plugins and the active theme (and its parent). Inactive plugins are listed below but not counted.', 'leapcheck' ); ?></p>
+		<p class="description"><?php esc_html_e( 'The summary counts active plugins and the active theme (and its parent). Inactive plugins are listed below but not counted. Items that are not in the database yet, not checked yet, or only checked in a different version count as "could not be checked exactly".', 'leapcheck' ); ?></p>
+		<?php leapcheck_render_requirements_summary( $rows ); ?>
+	</div>
+	<?php
+}
+
+/**
+ * "Check remaining (N)" when the per-page fetch limit was reached.
+ *
+ * @param array[] $rows Items with records.
+ */
+function leapcheck_render_pending( array $rows ) {
+	$pending = 0;
+	foreach ( $rows as $row ) {
+		if ( isset( $row['record']['status'] ) && 'pending' === $row['record']['status'] ) {
+			++$pending;
+		}
+	}
+	if ( 0 === $pending ) {
+		return;
+	}
+	?>
+	<div class="notice notice-info inline leapcheck-pending">
+		<p>
+			<?php
+			/* translators: %d: maximum number of downloads per page load */
+			echo esc_html( sprintf( __( 'To keep this page fast, LeapCheck downloads at most %d result files at a time. Results already downloaded are kept, so each click continues where the last one stopped.', 'leapcheck' ), LEAPCHECK_MAX_FETCHES ) );
+			?>
+		</p>
+		<p>
+			<a class="button button-primary" href="<?php echo esc_url( leapcheck_page_url() ); ?>">
+				<?php
+				/* translators: %d: number of plugins and themes not checked yet */
+				echo esc_html( sprintf( __( 'Check remaining (%d)', 'leapcheck' ), $pending ) );
+				?>
+			</a>
+		</p>
+	</div>
+	<?php
+}
+
+/**
+ * One line listing the PHP extensions the items in use need.
+ *
+ * @param array[] $rows Items with records.
+ */
+function leapcheck_render_requirements_summary( array $rows ) {
+	$extensions = leapcheck_collect_requirements( $rows );
+	if ( empty( $extensions ) ) {
+		return;
+	}
+	$missing = array();
+	foreach ( $extensions as $ext ) {
+		if ( ! extension_loaded( $ext ) ) {
+			$missing[] = $ext;
+		}
+	}
+	?>
+	<p class="leapcheck-requirements">
+		<?php
+		echo esc_html(
+			sprintf(
+				/* translators: %s: comma-separated list of PHP extensions, e.g. "gd, intl" */
+				__( 'Your site\'s plugins and themes need these PHP extensions: %s. Make sure your host enables them on the new PHP version.', 'leapcheck' ),
+				implode( ', ', $extensions )
+			)
+		);
+		?>
+		<?php if ( ! empty( $missing ) ) : ?>
+			<br />
+			<strong>
+				<?php
+				/* translators: %s: comma-separated list of PHP extensions */
+				echo esc_html( sprintf( __( 'Not enabled on this server right now: %s.', 'leapcheck' ), implode( ', ', $missing ) ) );
+				?>
+			</strong>
+		<?php endif; ?>
+	</p>
+	<?php
+}
+
+/**
+ * Warning when two or more items in use bundle different versions of the same PHP library.
+ *
+ * @param array[] $rows Items with records.
+ */
+function leapcheck_render_conflicts( array $rows ) {
+	$conflicts = leapcheck_find_conflicts( $rows );
+	if ( empty( $conflicts ) ) {
+		return;
+	}
+	?>
+	<div class="notice notice-warning inline leapcheck-conflicts">
+		<h2><?php esc_html_e( 'Plugins bundle different versions of the same library', 'leapcheck' ); ?></h2>
+		<p><?php esc_html_e( 'PHP can load only one copy of a library\'s code. When several plugins ship their own copy, the copy that loads first may be used by all of them, so your site may be running an older version than some plugins expect. This is not always a problem (some plugins rename their copy to avoid it), but it is worth checking with the plugin developers before you upgrade PHP.', 'leapcheck' ); ?></p>
+		<ul class="leapcheck-list">
+			<?php foreach ( $conflicts as $conflict ) : ?>
+				<li>
+					<strong><?php echo esc_html( $conflict['library'] ); ?>:</strong>
+					<?php
+					$parts = array();
+					foreach ( $conflict['copies'] as $copy ) {
+						/* translators: 1: library version, 2: plugin or theme name */
+						$parts[] = sprintf( __( 'version %1$s in %2$s', 'leapcheck' ), $copy['version'], $copy['item'] );
+					}
+					echo esc_html( implode( '; ', $parts ) );
+					?>
+				</li>
+			<?php endforeach; ?>
+		</ul>
 	</div>
 	<?php
 }
@@ -387,7 +506,18 @@ function leapcheck_render_table( array $rows, $consent ) {
 				<tr>
 					<td><strong><?php echo esc_html( $item['name'] ); ?></strong><br /><code><?php echo esc_html( $item['slug'] ); ?></code></td>
 					<td><?php echo esc_html( $type ); ?></td>
-					<td><?php echo esc_html( '' !== $item['version'] ? $item['version'] : '—' ); ?></td>
+					<td>
+						<?php echo esc_html( '' !== $item['version'] ? $item['version'] : '—' ); ?>
+						<?php if ( $consent && ! empty( $record['fallback'] ) ) : ?>
+							<br />
+							<em class="leapcheck-fallback">
+								<?php
+								/* translators: %s: version number that was scanned */
+								echo esc_html( sprintf( __( 'Result for version %s (closest we have)', 'leapcheck' ), $record['fallback'] ) );
+								?>
+							</em>
+						<?php endif; ?>
+					</td>
 					<td><?php echo $item['active'] ? esc_html__( 'Active', 'leapcheck' ) : esc_html__( 'Inactive', 'leapcheck' ); ?></td>
 					<?php if ( $consent ) : ?>
 						<?php foreach ( $targets as $target ) : ?>
@@ -398,7 +528,7 @@ function leapcheck_render_table( array $rows, $consent ) {
 				<?php if ( $consent && isset( $record['status'] ) && 'ok' === $record['status'] ) : ?>
 					<tr class="leapcheck-details-row">
 						<td colspan="<?php echo esc_attr( (string) $columns ); ?>">
-							<?php leapcheck_render_details( $record['data'] ); ?>
+							<?php leapcheck_render_details( $record['data'], isset( $record['fallback'] ) ? (string) $record['fallback'] : '' ); ?>
 						</td>
 					</tr>
 				<?php endif; ?>
@@ -411,12 +541,18 @@ function leapcheck_render_table( array $rows, $consent ) {
 /**
  * Expandable findings and bundled libraries for one item.
  *
- * @param array $data Parsed result.
+ * @param array  $data     Parsed result.
+ * @param string $fallback Scanned version shown instead of the installed one, or ''.
  */
-function leapcheck_render_details( array $data ) {
+function leapcheck_render_details( array $data, $fallback = '' ) {
+	// Guarded ("info") findings are never counted; they are listed once, apart, below.
 	$finding_count = 0;
+	$guarded       = array();
 	foreach ( $data['targets'] as $target ) {
 		$finding_count += $target['findings_total'];
+		foreach ( $target['guarded'] as $f ) {
+			$guarded[ $f['rule_id'] . '|' . $f['file'] . '|' . $f['line'] ] = $f;
+		}
 	}
 	$component_count = count( $data['components'] );
 	?>
@@ -433,6 +569,15 @@ function leapcheck_render_details( array $data ) {
 			);
 			?>
 		</summary>
+
+		<?php if ( '' !== $fallback ) : ?>
+			<p><strong>
+				<?php
+				/* translators: %s: version number that was scanned */
+				echo esc_html( sprintf( __( 'Result for version %s (closest we have). Your installed version was not scanned, so treat this as a strong hint, not an answer.', 'leapcheck' ), $fallback ) );
+				?>
+			</strong></p>
+		<?php endif; ?>
 
 		<?php foreach ( leapcheck_targets() as $target ) : ?>
 			<?php
@@ -463,8 +608,6 @@ function leapcheck_render_details( array $data ) {
 							<td><?php
 								if ( 'error' === $f['severity'] ) {
 									esc_html_e( 'Error', 'leapcheck' );
-								} elseif ( 'info' === $f['severity'] ) {
-									esc_html_e( 'Guarded (skipped on new PHP)', 'leapcheck' );
 								} else {
 									esc_html_e( 'Warning', 'leapcheck' );
 								}
@@ -494,6 +637,55 @@ function leapcheck_render_details( array $data ) {
 				</p>
 			<?php endif; ?>
 		<?php endforeach; ?>
+
+		<?php if ( ! empty( $guarded ) ) : ?>
+			<details class="leapcheck-guarded">
+				<summary>
+					<?php
+					/* translators: %d: number of places in the code */
+					echo esc_html( sprintf( __( 'Old code that only runs on old PHP (safe to ignore) (%d)', 'leapcheck' ), count( $guarded ) ) );
+					?>
+				</summary>
+				<p class="description"><?php esc_html_e( 'This code is wrapped in a check (for example "if this function exists") so newer PHP skips it. It is not counted in any result.', 'leapcheck' ); ?></p>
+				<table class="widefat leapcheck-findings">
+					<thead>
+						<tr>
+							<th scope="col"><?php esc_html_e( 'File', 'leapcheck' ); ?></th>
+							<th scope="col"><?php esc_html_e( 'Line', 'leapcheck' ); ?></th>
+							<th scope="col"><?php esc_html_e( 'Message', 'leapcheck' ); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php foreach ( $guarded as $f ) : ?>
+							<tr>
+								<td><code><?php echo esc_html( $f['file'] ); ?></code></td>
+								<td><?php echo $f['line'] > 0 ? esc_html( (string) $f['line'] ) : '—'; ?></td>
+								<td><?php echo esc_html( $f['message'] ); ?></td>
+							</tr>
+						<?php endforeach; ?>
+					</tbody>
+				</table>
+			</details>
+		<?php endif; ?>
+
+		<h4><?php esc_html_e( 'PHP extensions needed', 'leapcheck' ); ?></h4>
+		<?php if ( empty( $data['requirements'] ) ) : ?>
+			<p><?php esc_html_e( 'None found.', 'leapcheck' ); ?></p>
+		<?php else : ?>
+			<p>
+				<?php
+				$labels = array();
+				foreach ( $data['requirements'] as $ext ) {
+					$labels[] = extension_loaded( $ext )
+						/* translators: %s: PHP extension name */
+						? sprintf( __( '%s (enabled now)', 'leapcheck' ), $ext )
+						/* translators: %s: PHP extension name */
+						: sprintf( __( '%s (not enabled now)', 'leapcheck' ), $ext );
+				}
+				echo esc_html( implode( ', ', $labels ) );
+				?>
+			</p>
+		<?php endif; ?>
 
 		<h4><?php esc_html_e( 'Bundled libraries found inside', 'leapcheck' ); ?></h4>
 		<?php if ( 0 === $component_count ) : ?>

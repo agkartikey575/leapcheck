@@ -1,6 +1,6 @@
 # LeapCheck test plan (phase 1: WordPress / PHP)
 
-Owner: QA & Test Automation Lead · Status: draft v1 (2026-11-02) · Scope: the `leapcheck` engine, its static JSON output and the release process.
+Status: v1 (2026-11-16) · Scope: the `leapcheck` engine, its static JSON output and the release process.
 
 Mission: nothing wrong reaches a user. A wrong "compatible" verdict is the worst defect we can ship: a site owner upgrades PHP and their site breaks. A wrong "breaks" verdict costs trust and support time. Both count as escaped defects.
 
@@ -45,7 +45,7 @@ A golden file is the `export` output for that version, normalised:
 3. Fail on any difference. Report it as a readable diff grouped by: verdict changed, findings added, findings removed, components added/removed, requirement changes.
 
 ### Updating goldens (blessing)
-- An intended change (new rule, fixed false positive) is "blessed" by regenerating the goldens with an explicit flag, e.g. `LEAPCHECK_BLESS=1 cargo test --test golden -- --ignored` (exact switch to be agreed with the engine team).
+- An intended change (new rule, fixed false positive) is "blessed" by regenerating the goldens with an explicit flag, e.g. `LEAPCHECK_BLESS=1 cargo test --test golden -- --ignored`.
 - The golden diff is part of the pull request. A reviewer reads it; any verdict change on a corpus entry needs a one-line reason in the PR.
 - Never bless a verdict change from `breaks` to `compatible` without a manual check of the affected findings (section 3).
 
@@ -54,6 +54,22 @@ The CI workflow (`.github/workflows/ci.yml`) runs `cargo test` on every push and
 
 ### Slow tier (nightly / before release, online)
 The full corpus golden comparison. Until the engine has a golden test harness, the nightly scan workflow (`.github/workflows/scan.yml`) exercises the corpus end to end, and its traces (`leapcheck runs --failed`, `leapcheck health`) are reviewed each morning.
+
+## Automated tests
+
+`cd engine && cargo test` runs offline: no PHP tools and no network. The verdict tests live in `engine/src/tests_verdicts.rs`. They write small PHP snippets to unique temp directories, build findings directly, and use the real rule files in `engine/rules/`. They cover:
+
+- **Guards:** an error inside `if (function_exists('mcrypt_encrypt'))` or after a `PHP_VERSION_ID` check becomes `info`. Unguarded removed functions stay `error`. Guards for other functions, or guards more than 80 lines above the call, do not apply.
+- **Fallbacks:** `if ($is_mysqli) { mysqli_query } else { mysql_query }` in one file becomes `info`. A `mysql_*` call in a file with no alternative, while another file uses `mysqli`, becomes a low-confidence `warning`. The same logic covers mcrypt with an `openssl_*` alternative.
+- **Suppressions:** the Carbon `DateTimeInterface` false positive is removed only for `CarbonInterface.php`. The `"warning"` action downgrades an error and appends the reason. Invalid regexes and a missing file are ignored safely.
+- **Attribution and versions:** a finding goes to the deepest component, matching whole path segments only. `ver_cmp` compares versions numerically (`5.2.7 < 5.2.10`).
+- **Detection:** PHPMailer 5.x and 6.x versions come from their signatures, and lookalike wrapper files are not matched. Composer `installed.json` packages are read. A GD call is reported with its file and line, and commented-out code is ignored.
+- **Verdict rules:** `breaks` means at least one error, `issues` means warnings only, and `compatible` means neither. `info` findings are never counted. Encoded files give `unknown`, or `breaks` if errors were found, never `compatible`.
+- **Golden pipeline:** a small multi-file plugin goes through suppressions, guards, fallbacks and attribution. Its normalised findings and verdict are compared line by line with the expected answer.
+
+Known limitations are recorded as `#[ignore]` tests that describe the correct behaviour, so they show up in `cargo test` output. List them with `cargo test -- --ignored`. When a limitation is fixed, remove the `#[ignore]` so the test guards against regressions.
+
+New rule (`engine/rules/*.json`) or fix → add a test in the same change. Every false positive found in an accuracy review gets a fixture here before the fix lands.
 
 ## 3. Accuracy review (manual check of a sample)
 
@@ -66,7 +82,7 @@ Purpose: measure how often our findings are right, and catch systematic false po
 
 ### Procedure per finding
 1. Open the file and line in the plugin version (download it locally to an isolated folder; never execute it).
-2. Decide: **TP** (real problem on that PHP target), **FP** (not a problem), or **Unsure** (dynamic code; escalate to the Compatibility Expert).
+2. Decide: **TP** (real problem on that PHP target), **FP** (not a problem), or **Unsure** (dynamic code; needs a second review).
 3. Check severity (error vs warning) and confidence level are right, and that the message is understandable.
 4. For components: confirm name, version and path against the library's own version string.
 5. Record in `docs/qa/accuracy/<release>.md`: plugin, version, target, rule_id, file:line, verdict (TP/FP/Unsure), note.
@@ -93,8 +109,3 @@ Before tagging an engine release or deploying a rules change to the public site:
 - [ ] WordPress plugin: `php -l` on PHP 7.4 and 8.4, manual smoke test on a clean WordPress install with opt-in off (no outbound requests) and on.
 - [ ] Release notes list rule changes and verdict changes on popular plugins.
 - [ ] Rollback plan: previous Vercel deployment can be promoted again (see `docs/ops/runbook.md`).
-
-## 5. Ownership
-- QA owns the corpus, goldens policy, accuracy review and release checklist.
-- DevOps owns CI/scan workflows and deploy.
-- Engine team owns the golden test harness implementation in `engine/tests/`.

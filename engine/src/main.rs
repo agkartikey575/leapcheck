@@ -6,6 +6,7 @@ mod model;
 mod php;
 mod site;
 mod trace;
+#[cfg(test)] mod tests_verdicts;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
