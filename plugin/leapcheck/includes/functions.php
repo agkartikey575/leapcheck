@@ -321,7 +321,7 @@ function leapcheck_parse_result( $data ) {
 				$severity   = leapcheck_str( $finding, 'severity' );
 				$findings[] = array(
 					'rule_id'    => leapcheck_str( $finding, 'rule_id' ),
-					'severity'   => in_array( $severity, array( 'error', 'warning' ), true ) ? $severity : 'warning',
+					'severity'   => in_array( $severity, array( 'error', 'warning', 'info' ), true ) ? $severity : 'warning',
 					'confidence' => leapcheck_str( $finding, 'confidence' ),
 					'message'    => leapcheck_str( $finding, 'message' ),
 					'file'       => leapcheck_str( $finding, 'file' ),

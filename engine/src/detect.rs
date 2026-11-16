@@ -271,3 +271,138 @@ pub fn attribute(file: &str, components: &[Component]) -> Option<String> {
             None => c.name.clone(),
         })
 }
+
+/// Extract the PHP identifier a PHPCompatibility rule refers to, e.g.
+/// "PHPCompatibility.FunctionUse.RemovedFunctions.mysql_queryDeprecatedRemoved" -> "mysql_query".
+fn rule_ident(rule: &str) -> Option<String> {
+    let last = rule.rsplit('.').next()?;
+    let mut s = last.to_string();
+    for suf in ["DeprecatedRemoved", "Removed", "Deprecated", "Found", "Changed", "Numeric"] {
+        if let Some(x) = s.strip_suffix(suf) {
+            s = x.to_string();
+            break;
+        }
+    }
+    if s.is_empty() || s.chars().next()?.is_uppercase() {
+        return None; // generic sniffs (e.g. "Removed" syntax rules) have no identifier
+    }
+    Some(s.to_lowercase())
+}
+
+/// Downgrade errors in code that only runs when the old feature exists, e.g.
+/// `if (function_exists('mcrypt_encrypt')) { ... }`, `extension_loaded('mysql')`, `defined('X')`,
+/// or an explicit PHP version check. Such code is skipped on new PHP, so it can't break there.
+/// Guarded findings become severity "info" (shown, but not counted in the verdict).
+pub fn apply_guards(root: &Path, findings: &mut [crate::model::Finding]) {
+    let version_guard = Regex::new(r"(?i)(PHP_VERSION_ID\s*[<>]=?|version_compare\s*\(\s*(PHP_VERSION|phpversion\s*\(\s*\)))").unwrap();
+    let mut cache: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for f in findings.iter_mut().filter(|f| f.severity == "error") {
+        let lines = cache.entry(f.file.clone()).or_insert_with(|| {
+            std::fs::read_to_string(root.join(&f.file)).map(|t| t.lines().map(|l| l.to_lowercase()).collect()).unwrap_or_default()
+        });
+        if lines.is_empty() || f.line == 0 {
+            continue;
+        }
+        let end = (f.line as usize).min(lines.len());
+        let start = end.saturating_sub(80);
+        let window = &lines[start..end];
+        let ident = rule_ident(&f.rule_id);
+        // Extension rules (e.g. "mcrypt") are guarded by checks for any function of that extension.
+        let guarded_by_ident = ident.as_ref().map_or(false, |id| {
+            let needle = regex::escape(id);
+            let re = Regex::new(&format!(
+                r#"(function_exists|extension_loaded|defined|is_callable|class_exists)\s*\(\s*['"]\\?{needle}"#
+            ))
+            .unwrap();
+            window.iter().any(|l| re.is_match(l))
+        });
+        let near_start = end.saturating_sub(15);
+        let guarded_by_version = lines[near_start..end].iter().any(|l| version_guard.is_match(l));
+        if guarded_by_ident || guarded_by_version {
+            f.severity = "info".into();
+            f.confidence = "low".into();
+            f.message = format!("Guarded (only runs when the old feature is available, so it is skipped on newer PHP): {}", f.message);
+        }
+    }
+}
+
+/// Old extensions removed from PHP long ago, and the modern alternatives code switches to.
+const FALLBACKS: &[(&str, &[&str])] = &[
+    ("mysql", &["mysqli"]),            // removed in PHP 7.0
+    ("mcrypt", &["openssl_", "sodium_"]), // removed in PHP 7.2
+    ("mdecrypt", &["openssl_", "sodium_"]), // mcrypt function with a different prefix
+    ("ereg", &["preg_"]),              // removed in PHP 7.0
+];
+
+/// Second pass for removed extensions: code written with a modern alternative alongside the old
+/// one is a fallback branch (`if (mysqli) {...} else { mysql_* }`). Such code cannot have run on
+/// PHP 7+ without the fallback, so these findings are downgraded:
+///  - same file has a guard for the extension or uses the modern alternative -> "info"
+///  - another file in the package does -> "warning" with low confidence ("likely fallback")
+pub fn apply_fallbacks(root: &Path, findings: &mut [crate::model::Finding]) {
+    let mut file_cache: BTreeMap<String, String> = BTreeMap::new();
+    let mut package_text: Option<String> = None;
+    for f in findings.iter_mut().filter(|f| f.severity == "error") {
+        let Some(ident) = rule_ident(&f.rule_id) else { continue };
+        let key = ident.split('_').next().unwrap_or("").to_string();
+        let Some((ext, alts)) = FALLBACKS.iter().find(|(e, _)| *e == key) else { continue };
+        let guard = Regex::new(&format!(r#"(function_exists|extension_loaded|is_callable)\s*\(\s*['"]\\?{ext}"#)).unwrap();
+        let text = file_cache
+            .entry(f.file.clone())
+            .or_insert_with(|| std::fs::read_to_string(root.join(&f.file)).unwrap_or_default().to_lowercase());
+        let in_file = guard.is_match(text) || alts.iter().any(|a| text.contains(a));
+        if in_file {
+            f.severity = "info".into();
+            f.confidence = "low".into();
+            f.message = format!("Fallback code (this file also handles the modern alternative or checks that '{ext}' exists, so this path is skipped on newer PHP): {}", f.message);
+            continue;
+        }
+        let pkg = package_text.get_or_insert_with(|| {
+            let mut s = String::new();
+            for e in WalkDir::new(root).into_iter().filter_map(|e| e.ok()).filter(|e| e.path().extension().map_or(false, |x| x == "php")) {
+                if let Ok(t) = std::fs::read_to_string(e.path()) {
+                    s.push_str(&t.to_lowercase());
+                }
+            }
+            s
+        });
+        if guard.is_match(pkg) || alts.iter().any(|a| pkg.contains(a)) {
+            f.severity = "warning".into();
+            f.confidence = "low".into();
+            f.message = format!("Likely fallback code (the package also uses the modern alternative or checks whether '{ext}' exists): {}", f.message);
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct Suppression {
+    rule_id: String,
+    path_regex: String,
+    /// "remove" (default): known false positive. "warning": real but non-breaking change.
+    #[serde(default)]
+    action: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// Known false positives of the underlying rule set, kept as data in rules/suppressions.json.
+pub fn apply_suppressions(rules_dir: &Path, findings: &mut Vec<crate::model::Finding>) {
+    let Ok(Some(list)) = read_json::<Vec<Suppression>>(&rules_dir.join("suppressions.json")) else { return };
+    let mut remove = vec![];
+    let mut downgrade = vec![];
+    for s in list {
+        let Ok(re) = Regex::new(&s.path_regex) else { continue };
+        if s.action.as_deref() == Some("warning") {
+            downgrade.push((s.rule_id, re, s.reason.unwrap_or_default()));
+        } else {
+            remove.push((s.rule_id, re));
+        }
+    }
+    findings.retain(|f| !remove.iter().any(|(rid, re)| f.rule_id == *rid && re.is_match(&f.file)));
+    for f in findings.iter_mut().filter(|f| f.severity == "error") {
+        if let Some((_, _, why)) = downgrade.iter().find(|(rid, re, _)| f.rule_id == *rid && re.is_match(&f.file)) {
+            f.severity = "warning".into();
+            f.message = format!("{} ({})", f.message, why);
+        }
+    }
+}

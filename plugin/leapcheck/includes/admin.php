@@ -460,7 +460,15 @@ function leapcheck_render_details( array $data ) {
 				<tbody>
 					<?php foreach ( $t['findings'] as $f ) : ?>
 						<tr>
-							<td><?php echo 'error' === $f['severity'] ? esc_html__( 'Error', 'leapcheck' ) : esc_html__( 'Warning', 'leapcheck' ); ?></td>
+							<td><?php
+								if ( 'error' === $f['severity'] ) {
+									esc_html_e( 'Error', 'leapcheck' );
+								} elseif ( 'info' === $f['severity'] ) {
+									esc_html_e( 'Guarded (skipped on new PHP)', 'leapcheck' );
+								} else {
+									esc_html_e( 'Warning', 'leapcheck' );
+								}
+								?></td>
 							<td>
 								<code><?php echo esc_html( $f['file'] ); ?></code>
 								<?php if ( '' !== $f['component'] ) : ?>

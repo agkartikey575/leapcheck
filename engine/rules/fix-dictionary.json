@@ -1,0 +1,356 @@
+[
+  {
+    "rule_prefix": "PHPCompatibility.FunctionUse.RemovedFunctions",
+    "title": "Uses a PHP feature that is being retired",
+    "plain_explanation": "This plugin calls a built-in PHP function that newer PHP versions have retired. If it has been removed, the page that uses it stops with an error. If it is only being phased out, the site still works but writes warnings to its error log.",
+    "what_to_do": "Update the plugin or theme to its newest version, then check again. If no update fixes it, ask its developer for a fix or look for a maintained alternative. For your developer: replace the function with the alternative named in the technical details."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.FunctionUse.RemovedFunctionParameters",
+    "title": "Passes a setting that PHP no longer accepts",
+    "plain_explanation": "The plugin gives a built-in PHP function an extra setting that newer PHP versions ignore or reject. Depending on the version, this causes warnings or stops the page.",
+    "what_to_do": "Update the plugin or theme, then check again. If the problem stays, send the technical details to its developer. For your developer: remove the retired parameter from the call."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.FunctionUse.OptionalToRequiredFunctionParameters",
+    "title": "Leaves out a setting that PHP now requires",
+    "plain_explanation": "The plugin calls a built-in PHP function without a setting that used to be optional. Newer PHP versions require it, so the call can fail.",
+    "what_to_do": "Update the plugin or theme, then check again. If the problem stays, send the technical details to its developer. For your developer: pass the now-required argument explicitly."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.FunctionUse.NewFunctions",
+    "title": "Needs a newer PHP version than the one checked",
+    "plain_explanation": "The plugin uses a PHP function that does not exist yet in the PHP version we checked against. This usually means the plugin expects a newer PHP version, or it has a safety check we could not see.",
+    "what_to_do": "Check the plugin's 'Requires PHP' value on its WordPress.org page. If it needs a newer PHP than you plan to use, choose a newer PHP version. If you think this is wrong, tell us using the 'Report a wrong result' link."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Extensions.RemovedExtensions",
+    "title": "Relies on a PHP add-on that no longer exists",
+    "plain_explanation": "The plugin uses a part of PHP (for example the old 'mysql_' database functions or 'mcrypt' encryption) that has been taken out of PHP. On newer PHP versions, this code stops with an error.",
+    "what_to_do": "Update the plugin or theme. If the newest version still has this, replace it with a maintained alternative, because this is a sign of very old code. For your developer: move to the modern replacement (for example mysqli/PDO or OpenSSL/Sodium)."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Classes.RemovedClasses",
+    "title": "Uses a PHP building block that was removed",
+    "plain_explanation": "The plugin uses a built-in PHP class that newer PHP versions no longer include. Code that uses it stops with an error.",
+    "what_to_do": "Update the plugin or theme, then check again. If no update fixes it, ask its developer or replace the plugin. For your developer: switch to the replacement class named in the technical details."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Classes.NewClasses",
+    "title": "Needs a newer PHP version than the one checked",
+    "plain_explanation": "The plugin uses a built-in PHP class that does not exist yet in the PHP version we checked against. The plugin may expect a newer PHP version, or it may have a safety check we could not see.",
+    "what_to_do": "Check the plugin's 'Requires PHP' value on its WordPress.org page. If it needs a newer PHP than you plan to use, choose a newer PHP version."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Classes.ForbiddenExtendingFinalPHPClass",
+    "title": "Builds on a PHP class that can no longer be extended",
+    "plain_explanation": "The plugin builds its own code on top of a built-in PHP class that newer PHP versions have locked. PHP refuses to load this code, so the page stops with an error.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer or replace the plugin. For your developer: use composition instead of extending the final class."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Classes.ForbiddenClassNameUnderscore",
+    "title": "Uses a name that PHP now reserves",
+    "plain_explanation": "The plugin names a piece of its code with a single underscore '_'. PHP 8.4 reserves that name for its own future use and warns about it.",
+    "what_to_do": "Update the plugin or theme. This is a small fix for its developer. For your developer: rename the class '_' to a regular name."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Classes.RemovedOrphanedParent",
+    "title": "Refers to a parent that does not exist",
+    "plain_explanation": "The plugin refers to a 'parent' piece of code that is not there. Since PHP 8.0, PHP refuses to load this code.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer or replace the plugin. For your developer: remove the 'parent' reference or add the missing parent class."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Constants.RemovedConstants",
+    "title": "Uses a PHP setting name that was retired",
+    "plain_explanation": "The plugin uses a built-in PHP constant (a fixed named value) that newer PHP versions have retired. It may cause warnings or stop the page.",
+    "what_to_do": "Update the plugin or theme, then check again. If the problem stays, send the technical details to its developer. For your developer: replace the constant with the alternative named in the technical details."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Constants.NewConstants",
+    "title": "Needs a newer PHP version than the one checked",
+    "plain_explanation": "The plugin uses a built-in PHP constant that does not exist yet in the PHP version we checked against.",
+    "what_to_do": "Check the plugin's 'Requires PHP' value on its WordPress.org page and choose a PHP version at least that new."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.IniDirectives.RemovedIniDirectives",
+    "title": "Changes a PHP setting that no longer exists",
+    "plain_explanation": "The plugin reads or changes a PHP configuration setting that newer PHP versions have removed. Usually this only causes warnings, but features that depend on the setting may stop working.",
+    "what_to_do": "Update the plugin or theme, then check again. For your developer: remove the ini_set()/ini_get() call or use the replacement setting."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.FunctionDeclarations.RemovedImplicitlyNullableParam",
+    "title": "Old way of writing optional values (PHP 8.4 warning)",
+    "plain_explanation": "The plugin writes optional values in a way PHP 8.4 has started to warn about. The site keeps working; PHP only writes notices to the error log. This is one of the most common findings and is not urgent.",
+    "what_to_do": "No action needed before upgrading. Keep the plugin updated so the developer can tidy this up before a future PHP version removes it. For your developer: change 'Type $x = null' to '?Type $x = null'."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.FunctionDeclarations.RemovedOptionalBeforeRequiredParam",
+    "title": "Optional value listed before a required one",
+    "plain_explanation": "The plugin lists an optional value before a required one when it defines a function. Newer PHP versions warn about this. The site keeps working.",
+    "what_to_do": "No action needed before upgrading. Keep the plugin updated. For your developer: reorder the parameters or remove the default value."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.FunctionDeclarations.RemovedReturnByReferenceFromVoid",
+    "title": "Small coding pattern PHP now warns about",
+    "plain_explanation": "The plugin uses a rare coding pattern (returning by reference from a function that returns nothing) that PHP 8.1 and later warn about. The site keeps working.",
+    "what_to_do": "No action needed before upgrading. Keep the plugin updated. For your developer: remove the '&' from the void function declaration."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.FunctionDeclarations.ForbiddenFinalPrivateMethods",
+    "title": "Small coding pattern PHP now warns about",
+    "plain_explanation": "The plugin marks a private function as 'final', which has no effect and causes a warning since PHP 8.0. The site keeps working.",
+    "what_to_do": "No action needed before upgrading. For your developer: remove the 'final' keyword from the private method."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.FunctionDeclarations.RemovedCallingDestructAfterConstructorExit",
+    "title": "Clean-up code may no longer run",
+    "plain_explanation": "The plugin stops running in the middle of setting something up and expects its clean-up code to run afterwards. Since PHP 8.0, that clean-up code no longer runs in this case.",
+    "what_to_do": "Usually harmless, but test the plugin after upgrading. For your developer: do not rely on __destruct() after exit() in a constructor."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.FunctionNameRestrictions.RemovedPHP4StyleConstructors",
+    "title": "Uses a very old way of setting up code",
+    "plain_explanation": "The plugin uses a setup style from PHP 4 (about 20 years old). Since PHP 8.0, PHP ignores it, so the plugin can behave wrongly or stop with an error.",
+    "what_to_do": "Update the plugin or theme. If the newest version still has this, the plugin is probably abandoned: replace it with a maintained alternative. For your developer: rename the method to __construct()."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.FunctionNameRestrictions.RemovedMagicAutoload",
+    "title": "Uses a loading method PHP removed",
+    "plain_explanation": "The plugin uses an old way of loading its own code (__autoload) that was removed in PHP 8.0. The plugin may fail to load parts of itself.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, replace it with a maintained alternative. For your developer: use spl_autoload_register()."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.FunctionNameRestrictions.ReservedFunctionNames",
+    "title": "Uses a name style PHP keeps for itself",
+    "plain_explanation": "The plugin names a function with two underscores at the start, a style PHP reserves for its own features. It works today but could clash with a future PHP feature.",
+    "what_to_do": "No action needed before upgrading. For your developer: rename the function so it does not start with '__'."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Interfaces.RemovedSerializable",
+    "title": "Old way of saving data (PHP 8.1 warning)",
+    "plain_explanation": "The plugin saves some of its data using an older method that PHP 8.1 and later warn about. The site keeps working.",
+    "what_to_do": "No action needed before upgrading. Keep the plugin updated. For your developer: add __serialize() and __unserialize() next to the Serializable methods."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Interfaces.InternalInterfaces",
+    "title": "Uses a part of PHP meant only for PHP itself",
+    "plain_explanation": "The plugin tries to use a built-in PHP interface that only PHP itself may use. PHP refuses to load this code.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer or replace the plugin. For your developer: implement the public interface instead (for example IteratorAggregate instead of Traversable)."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Keywords.ForbiddenNames",
+    "title": "Uses a word that PHP now reserves",
+    "plain_explanation": "The plugin names a piece of its code with a word that newer PHP versions use as a keyword (for example 'enum', 'match' or 'readonly'). PHP cannot read this code and the page stops with an error.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer or replace the plugin. For your developer: rename the class, function or constant."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Keywords.NewKeywords",
+    "title": "Needs a newer PHP version than the one checked",
+    "plain_explanation": "The plugin uses a PHP keyword that does not exist yet in the PHP version we checked against.",
+    "what_to_do": "Check the plugin's 'Requires PHP' value on its WordPress.org page and choose a PHP version at least that new."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.LanguageConstructs.RemovedLanguageConstructs",
+    "title": "Uses a shortcut PHP is retiring",
+    "plain_explanation": "The plugin uses a PHP shortcut (such as backticks to run server commands) that newer PHP versions are retiring. For now it only causes warnings.",
+    "what_to_do": "No action needed before upgrading. Keep the plugin updated. For your developer: use the alternative named in the technical details (for example shell_exec())."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Operators.RemovedTernaryAssociativity",
+    "title": "Uses an unclear 'if-then' shortcut",
+    "plain_explanation": "The plugin chains several short 'if-then' expressions without brackets. Since PHP 8.0, PHP refuses to run this, because the meaning is unclear.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer. For your developer: add parentheses to nested ternary expressions."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Operators.ChangedConcatOperatorPrecedence",
+    "title": "Text and maths mixed without brackets",
+    "plain_explanation": "The plugin combines text and numbers in one line without brackets. Since PHP 8.0, PHP works this out in a different order, so the result shown on the page may change.",
+    "what_to_do": "Test the plugin after upgrading. For your developer: add parentheses around the arithmetic part."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedTriggerErrorLevel",
+    "title": "Uses an error type PHP 8.4 retires",
+    "plain_explanation": "The plugin reports its own errors with a type (E_USER_ERROR) that PHP 8.4 and later warn about. The site keeps working.",
+    "what_to_do": "No action needed before upgrading. Keep the plugin updated. For your developer: throw an exception or use a different error level."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedImplodeFlexibleParamOrder",
+    "title": "Joins text in a way PHP 8 rejects",
+    "plain_explanation": "The plugin joins a list into text using an old argument order. PHP 8.0 and later reject this order and the page stops with an error.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer. For your developer: call implode($separator, $array)."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedGetClassNoArgs",
+    "title": "Small coding pattern PHP 8.3 warns about",
+    "plain_explanation": "The plugin asks PHP for a class name in a way that PHP 8.3 and later warn about. The site keeps working.",
+    "what_to_do": "No action needed before upgrading. For your developer: use self::class or static::class instead of get_class() without arguments."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.ForbiddenGetClassNoArgsOutsideOO",
+    "title": "Asks for a class name in the wrong place",
+    "plain_explanation": "The plugin asks PHP for a class name outside of a class. Since PHP 8.0, this stops the page with an error.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer. For your developer: pass the object to get_class() or move the call inside the class."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedPCREModifiers",
+    "title": "Uses a text-matching option PHP removed",
+    "plain_explanation": "The plugin uses an old option (the '/e' modifier) for matching text that PHP removed for security reasons. The code no longer works.",
+    "what_to_do": "Update the plugin or theme. If the newest version still has this, replace the plugin: this is very old code. For your developer: use preg_replace_callback()."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedMbstringModifiers",
+    "title": "Uses a text-matching option PHP removed",
+    "plain_explanation": "The plugin uses an old option for matching text in other languages that PHP removed. The code no longer works.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, replace the plugin. For your developer: use mb_ereg_replace_callback()."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedHashAlgorithms",
+    "title": "Uses a retired scrambling method",
+    "plain_explanation": "The plugin uses a method for scrambling data (a hash algorithm) that newer PHP versions no longer support.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer. For your developer: switch to a supported algorithm such as sha256."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedNonCryptoHash",
+    "title": "Uses a weak scrambling method for security",
+    "plain_explanation": "The plugin uses a fast but weak scrambling method for a security feature. Newer PHP versions refuse this combination and the code fails.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer. For your developer: use a cryptographic algorithm such as sha256 with hash_hmac()."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedProprietaryCSVEscaping",
+    "title": "Spreadsheet export uses an old default (PHP 8.4 warning)",
+    "plain_explanation": "The plugin reads or writes CSV (spreadsheet) files without stating one setting. PHP 8.4 and later warn about this. Exports keep working.",
+    "what_to_do": "No action needed before upgrading. Keep the plugin updated. For your developer: pass the $escape argument explicitly (usually an empty string)."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedSetlocaleString",
+    "title": "Sets the language in a way PHP removed",
+    "plain_explanation": "The plugin sets the site's language and region with plain text where PHP now expects a fixed setting name. The language setting may not apply.",
+    "what_to_do": "Update the plugin or theme. For your developer: use the LC_* constants with setlocale()."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedVersionCompareOperators",
+    "title": "Compares version numbers with an old shortcut",
+    "plain_explanation": "The plugin compares version numbers using an undocumented shortcut that PHP 8.1 removed. The check may give the wrong answer or fail.",
+    "what_to_do": "Update the plugin or theme. For your developer: use the documented operators such as '<', '>=' or 'eq'."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedXmlSetHandlerCallbackUnset",
+    "title": "Uses an old way to switch off an XML handler",
+    "plain_explanation": "The plugin switches off part of its XML processing in a way that PHP 8.4 and later warn about. The site keeps working.",
+    "what_to_do": "No action needed before upgrading. For your developer: pass null instead of an empty string."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedMbCheckEncodingNoArgs",
+    "title": "Small coding pattern PHP 8.1 warns about",
+    "plain_explanation": "The plugin checks text encoding without saying which text to check. PHP 8.1 and later warn about this. The site keeps working.",
+    "what_to_do": "No action needed before upgrading. For your developer: pass the string to mb_check_encoding()."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.RemovedAssertStringAssertion",
+    "title": "Uses a check written as text",
+    "plain_explanation": "The plugin writes an internal check as a piece of text. PHP 8.0 and later no longer run checks written this way.",
+    "what_to_do": "Update the plugin or theme. For your developer: pass an expression to assert(), not a string."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ParameterValues.ChangedIntToBoolParamType",
+    "title": "Passes a number where PHP now expects yes/no",
+    "plain_explanation": "The plugin passes a number to a PHP function that now expects true or false. This can cause errors on newer PHP versions.",
+    "what_to_do": "Update the plugin or theme. For your developer: pass true/false instead of 1/0."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Syntax.RemovedCurlyBraceArrayAccess",
+    "title": "Uses old curly-bracket syntax",
+    "plain_explanation": "The plugin reads parts of lists or text using curly brackets { }. PHP 8.0 and later cannot read this code, so the page stops with an error.",
+    "what_to_do": "Update the plugin or theme. If the newest version still has this, replace the plugin. For your developer: use square brackets [ ] instead."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Syntax.ForbiddenCallTimePassByReference",
+    "title": "Uses very old syntax PHP cannot read",
+    "plain_explanation": "The plugin uses syntax that PHP removed more than ten years ago (in PHP 5.4). PHP cannot read this code.",
+    "what_to_do": "Replace the plugin with a maintained alternative: this code is very old. For your developer: remove the '&' from the function call."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Syntax.RemovedNewReference",
+    "title": "Uses very old syntax PHP cannot read",
+    "plain_explanation": "The plugin uses syntax ('=& new') that PHP removed in PHP 7.0. PHP cannot read this code.",
+    "what_to_do": "Replace the plugin with a maintained alternative: this code is very old. For your developer: remove the '&' before 'new'."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.TextStrings.RemovedDollarBraceStringEmbeds",
+    "title": "Old way of putting values into text (PHP 8.2 warning)",
+    "plain_explanation": "The plugin puts values into text using the '${...}' style that PHP 8.2 and later warn about. The site keeps working.",
+    "what_to_do": "No action needed before upgrading. Keep the plugin updated. For your developer: write '{$var}' instead of '${var}'."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.TypeCasts.RemovedTypeCasts",
+    "title": "Uses an old way of converting values",
+    "plain_explanation": "The plugin converts values with an old spelling, such as '(unset)', '(real)', '(integer)' or '(boolean)'. Some were removed in PHP 8.0 and stop the page; others are retired in PHP 8.5 and only cause warnings.",
+    "what_to_do": "Update the plugin or theme. If it is marked 'Will stop working', ask its developer for a fix. For your developer: use (int), (bool), (float) or (string), and set variables to null instead of (unset)."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Variables.RemovedPredefinedGlobalVariables",
+    "title": "Reads a value PHP no longer provides",
+    "plain_explanation": "The plugin reads a built-in value (for example $HTTP_RAW_POST_DATA or $php_errormsg) that PHP no longer fills in. The feature that uses it may silently stop working.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer. For your developer: use the alternative named in the technical details (for example file_get_contents('php://input'))."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Variables.RemovedIndirectModificationOfGlobals",
+    "title": "Changes site-wide values in a way PHP 8.1 blocks",
+    "plain_explanation": "The plugin changes the list of site-wide values ($GLOBALS) as a whole. PHP 8.1 and later refuse this and the page stops with an error.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer. For your developer: change individual $GLOBALS entries instead of the whole array."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Variables.ForbiddenThisUseContexts",
+    "title": "Uses a reserved name in the wrong place",
+    "plain_explanation": "The plugin uses the special name '$this' in a place where PHP does not allow it. PHP refuses to run this code.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, ask its developer. For your developer: rename the variable."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Variables.NewUniformVariableSyntax",
+    "title": "Code that PHP now reads differently",
+    "plain_explanation": "The plugin uses a complex way of naming values that PHP 7.0 and later read in a different order. The code may do something different from what was intended.",
+    "what_to_do": "Test the plugin after upgrading. For your developer: add curly braces to make the intended order explicit."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Miscellaneous.RemovedAlternativePHPTags",
+    "title": "Uses old code markers PHP cannot read",
+    "plain_explanation": "The plugin marks its code with old tags ('<%' or '<script language=\"php\">') that PHP 7.0 removed. That code is shown as text or breaks the page.",
+    "what_to_do": "Replace the plugin with a maintained alternative: this code is very old. For your developer: use '<?php' tags."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ControlStructures.RemovedTerminatingCaseWithSemicolon",
+    "title": "Small punctuation PHP 8.5 warns about",
+    "plain_explanation": "The plugin ends a 'case' line with a semicolon instead of a colon. PHP 8.5 and later warn about this. The site keeps working.",
+    "what_to_do": "No action needed before upgrading. For your developer: replace ';' with ':' after the case label."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ControlStructures.DiscouragedSwitchContinue",
+    "title": "Uses 'continue' where PHP expects 'break'",
+    "plain_explanation": "The plugin uses 'continue' inside a 'switch' block. PHP 7.3 and later warn about this because it acts like 'break'. The site keeps working.",
+    "what_to_do": "No action needed before upgrading. For your developer: use 'break' or 'continue 2'."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.ControlStructures.ForbiddenBreakContinueOutsideLoop",
+    "title": "Uses 'break' outside a loop",
+    "plain_explanation": "The plugin uses 'break' or 'continue' outside of a loop. PHP 7.0 and later cannot read this code.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, replace it. For your developer: remove the statement or restructure the loop."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Lists.ForbiddenEmptyListAssignment",
+    "title": "Uses an empty list PHP cannot read",
+    "plain_explanation": "The plugin uses an empty 'list()' statement. PHP 7.0 and later cannot read this code.",
+    "what_to_do": "Update the plugin or theme. If no update fixes it, replace it. For your developer: remove the empty list() assignment."
+  },
+  {
+    "rule_prefix": "PHPCompatibility.Numbers.RemovedHexadecimalNumericStrings",
+    "title": "Treats text like '0x1A' as a number",
+    "plain_explanation": "The plugin expects PHP to treat text such as '0x1A' as a number. Since PHP 7.0 it does not, so calculations may give wrong results.",
+    "what_to_do": "Test the plugin after upgrading. For your developer: convert explicitly with hexdec()."
+  },
+  {
+    "rule_prefix": "PHPCompatibility",
+    "title": "Code that may not work on the new PHP version",
+    "plain_explanation": "We found code in this plugin or theme that changes behaviour on the PHP version you picked. The technical details show exactly where.",
+    "what_to_do": "Update the plugin or theme to its newest version, then check again. If the result stays the same, send the technical details to its developer."
+  }
+]

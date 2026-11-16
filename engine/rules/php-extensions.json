@@ -1,0 +1,197 @@
+[
+  {
+    "extension": "gd",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?(?i:image(?:create(?:truecolor|fromjpeg|frompng|fromgif|fromwebp|fromavif|frombmp|fromstring)?|copyresampled|copyresized|copymerge|jpeg|png|gif|webp|avif|ttftext|ttfbbox|colorallocate(?:alpha)?|colorat|colortransparent|destroy|scale|rotate|filter|sx|sy|alphablending|savealpha|setpixel|filledrectangle|crop|flip|interlace))\\s*\\(",
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?(?i:gd_info)\\s*\\("
+    ],
+    "notes": "getimagesize() is in ext/standard, not GD, so it is deliberately not a GD pattern. WordPress core picks GD or Imagick itself via WP_Image_Editor; only direct calls count."
+  },
+  {
+    "extension": "imagick",
+    "patterns": [
+      "(?i)\\bnew\\s+\\\\?Imagick(?:Draw|Pixel|PixelIterator|Kernel)?\\b",
+      "(?:^|[^\\w$>\\\\])\\\\?Imagick(?:Draw|Pixel)?::\\w"
+    ],
+    "notes": "Matches new Imagick*/Imagick::CONST. Plugins usually guard Imagick use with class_exists(), so this is often optional."
+  },
+  {
+    "extension": "mbstring",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?mb_(?:strtolower|strtoupper|strpos|stripos|strrpos|strripos|strstr|stristr|strrchr|str_split|str_pad|convert_encoding|convert_case|convert_variables|internal_encoding|detect_encoding|detect_order|check_encoding|strwidth|strimwidth|substr_count|encode_mimeheader|decode_mimeheader|encode_numericentity|decode_numericentity|send_mail|regex_encoding|ereg\\w*|eregi\\w*|split|list_encodings|http_output|http_input|language|ord|chr|scrub|parse_str|preferred_mime_name|output_handler|substitute_character|encoding_aliases|trim|ltrim|rtrim|ucfirst|lcfirst|get_info|strcut)\\s*\\("
+    ],
+    "exclude_path_regex": "(^|/)symfony/polyfill-mbstring/",
+    "notes": "mb_substr() and mb_strlen() are excluded on purpose: WordPress core polyfills them in wp-includes/compat.php. symfony/polyfill-mbstring provides the rest in many plugins; exclude_path_regex lists the polyfill folder."
+  },
+  {
+    "extension": "intl",
+    "patterns": [
+      "(?i)\\bnew\\s+\\\\?(?:NumberFormatter|Collator|IntlDateFormatter|MessageFormatter|ResourceBundle|Transliterator|Spoofchecker|IntlBreakIterator|IntlGregorianCalendar)\\b",
+      "(?:^|[^\\w$>\\\\])\\\\?(?:Normalizer|Transliterator|IntlChar|IntlDateFormatter|NumberFormatter|Collator|IntlCalendar|IntlTimeZone|ResourceBundle|Grapheme)::\\w",
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?(?:idn_to_ascii|idn_to_utf8|grapheme_[a-z_]+|normalizer_(?:normalize|is_normalized)|numfmt_[a-z_]+|collator_[a-z_]+|datefmt_[a-z_]+|msgfmt_[a-z_]+|transliterator_[a-z_]+|intlcal_[a-z_]+|intltz_[a-z_]+|locale_(?:get_default|set_default|accept_from_http|get_display_\\w+|parse|compose|lookup|get_primary_language|get_region|canonicalize))\\s*\\("
+    ],
+    "exclude_path_regex": "(^|/)symfony/polyfill-intl-[a-z]+/",
+    "notes": "symfony/polyfill-intl-idn and -normalizer replace idn_to_ascii()/Normalizer; locale_* is limited to real intl names because WordPress has locale_stylesheet()."
+  },
+  {
+    "extension": "curl",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?curl_(?:init|setopt|setopt_array|exec|close|getinfo|error|errno|strerror|reset|copy_handle|escape|unescape|pause|upkeep|version|multi_[a-z_]+|share_[a-z_]+)\\s*\\(",
+      "(?i)\\bnew\\s+\\\\?CURL(?:File|StringFile)\\b"
+    ],
+    "notes": "WordPress HTTP API (wp_remote_*) falls back to streams when curl is missing; only direct curl_* calls count. Many bundled SDKs (Guzzle, Stripe) use curl only when present."
+  },
+  {
+    "extension": "zip",
+    "patterns": [
+      "(?i)\\bnew\\s+\\\\?ZipArchive\\b",
+      "(?:^|[^\\w$>\\\\])\\\\?ZipArchive::[A-Z_]+",
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?zip_(?:open|read|close|entry_[a-z_]+)\\s*\\("
+    ],
+    "notes": "WordPress core falls back to PclZip when ZipArchive is missing, so code using unzip_file() does not count."
+  },
+  {
+    "extension": "dom",
+    "patterns": [
+      "(?i)\\bnew\\s+\\\\?DOM(?:Document|XPath|Element|Text|Comment|DocumentFragment|Implementation|Attr|CdataSection|ProcessingInstruction)\\b",
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?dom_import_simplexml\\s*\\(",
+      "(?:^|[^\\w$>\\\\])\\\\?Dom\\\\(?:HTML|XML)Document::\\w"
+    ]
+  },
+  {
+    "extension": "simplexml",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?simplexml_(?:load_string|load_file|import_dom)\\s*\\(",
+      "(?i)\\bnew\\s+\\\\?SimpleXML(?:Element|Iterator)\\b"
+    ]
+  },
+  {
+    "extension": "xml",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?xml_(?:parser_create(?:_ns)?|parse|parse_into_struct|set_element_handler|set_character_data_handler|set_default_handler|set_object|parser_set_option|parser_get_option|parser_free|get_error_code|error_string|get_current_line_number|get_current_byte_index)\\s*\\("
+    ]
+  },
+  {
+    "extension": "xmlreader",
+    "patterns": [
+      "(?i)\\bnew\\s+\\\\?XMLReader\\b",
+      "(?:^|[^\\w$>\\\\])\\\\?XMLReader::(?:open|xml|fromString|fromUri|fromStream|[A-Z_]{3,})\\b"
+    ]
+  },
+  {
+    "extension": "sodium",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?sodium_(?:crypto_[a-z0-9_]+|bin2hex|hex2bin|bin2base64|base642bin|memzero|memcmp|compare|increment|add|pad|unpad)\\s*\\("
+    ],
+    "exclude_path_regex": "(^|/)paragonie/sodium_compat/",
+    "notes": "WordPress core ships paragonie/sodium_compat, so sodium_* calls usually work without ext-sodium on WordPress. Treat as informational."
+  },
+  {
+    "extension": "bcmath",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?bc(?:add|sub|mul|div|mod|pow|powmod|sqrt|scale|comp|floor|ceil|round|divmod)\\s*\\(",
+      "(?i)\\bnew\\s+\\\\?BcMath\\\\Number\\b"
+    ]
+  },
+  {
+    "extension": "gmp",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?gmp_[a-z0-9_]+\\s*\\(",
+      "(?i)\\bnew\\s+\\\\?GMP\\b"
+    ],
+    "notes": "Bundled math libraries (phpseclib BigInteger, brick/math) use GMP only when present and fall back to bcmath or pure PHP."
+  },
+  {
+    "extension": "exif",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?(?:exif_(?:read_data|thumbnail|imagetype|tagname)|read_exif_data)\\s*\\("
+    ]
+  },
+  {
+    "extension": "openssl",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?openssl_[a-z0-9_]+\\s*\\("
+    ]
+  },
+  {
+    "extension": "soap",
+    "patterns": [
+      "(?i)\\bnew\\s+\\\\?Soap(?:Client|Server|Var|Header|Param|Fault)\\b",
+      "(?i)\\bextends\\s+\\\\?Soap(?:Client|Server)\\b"
+    ]
+  },
+  {
+    "extension": "mysqli",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?mysqli_[a-z_]+\\s*\\(",
+      "(?i)\\bnew\\s+\\\\?mysqli\\s*\\("
+    ],
+    "notes": "Every WordPress site already has mysqli (core requires it), so this is informational only."
+  },
+  {
+    "extension": "iconv",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?(?:iconv|iconv_(?:strlen|substr|strpos|strrpos|mime_encode|mime_decode|mime_decode_headers|get_encoding|set_encoding)|ob_iconv_handler)\\s*\\("
+    ],
+    "exclude_path_regex": "(^|/)symfony/polyfill-(iconv|mbstring)/"
+  },
+  {
+    "extension": "fileinfo",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?(?:finfo_(?:open|file|buffer|close|set_flags)|mime_content_type)\\s*\\(",
+      "(?i)\\bnew\\s+\\\\?finfo\\b"
+    ],
+    "notes": "mime_content_type() belongs to ext-fileinfo."
+  },
+  {
+    "extension": "json",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?json_(?:encode|decode|last_error|last_error_msg|validate)\\s*\\("
+    ],
+    "notes": "Always enabled since PHP 8.0 (cannot be disabled). Kept for PHP 7.x targets; the engine/UI should not warn about it on PHP >= 8.0."
+  },
+  {
+    "extension": "sockets",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?socket_(?:create|create_pair|create_listen|connect|bind|listen|accept|read|write|send|sendto|sendmsg|recv|recvfrom|recvmsg|select|close|shutdown|set_option|get_option|setopt|getopt|set_block|set_nonblock|last_error|strerror|clear_error|getpeername|getsockname|addrinfo_[a-z_]+|import_stream|export_stream|atmark|cmsg_space)\\s*\\("
+    ]
+  },
+  {
+    "extension": "ftp",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?ftp_(?:connect|ssl_connect|login|close|quit|pasv|put|get|fput|fget|nb_[a-z_]+|nlist|rawlist|mlsd|chdir|cdup|mkdir|rmdir|delete|rename|size|mdtm|pwd|systype|exec|site|raw|chmod|alloc|append|get_option|set_option)\\s*\\("
+    ],
+    "notes": "WordPress' own FTP filesystem class is in core, not plugins; only direct ftp_* calls count."
+  },
+  {
+    "extension": "ldap",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?ldap_[a-z0-9_]+\\s*\\("
+    ]
+  },
+  {
+    "extension": "apcu",
+    "patterns": [
+      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?apcu_[a-z_]+\\s*\\(\\s*(?:[^$\\s]|\\$[^t]|\\$t[^h]|\\$th[^i]|\\$thi[^s]|\\$this[^-]|\\$this-[^>]|\\$this->[^a]|\\$this->a[^p]|\\$this->ap[^c]|\\$this->apc[^u]|\\$this->apcu[^P])",
+      "(?i)\\bnew\\s+\\\\?APCUIterator\\b"
+    ],
+    "exclude_path_regex": "(^|/)symfony/polyfill-uuid/",
+    "notes": "Composer's ClassLoader calls apcu_fetch($this->apcuPrefix...) only when APCu autoloading is switched on; the pattern skips that call."
+  },
+  {
+    "extension": "redis",
+    "patterns": [
+      "(?i)\\bnew\\s+\\\\?Redis(?:Cluster|Array|Sentinel)?\\s*\\(",
+      "(?:^|[^\\w$>\\\\])\\\\?Redis::(?:OPT_|SERIALIZER_|COMPRESSION_|SCAN_|MULTI\\b|PIPELINE\\b|ATOMIC\\b|REDIS_)"
+    ],
+    "notes": "Also hit by optional cache back-ends inside libraries (Monolog RedisHandler, SimplePie cache). Predis (pure PHP) is not matched."
+  },
+  {
+    "extension": "memcached",
+    "patterns": [
+      "(?i)\\bnew\\s+\\\\?Memcached\\s*\\(",
+      "(?:^|[^\\w$>\\\\])\\\\?Memcached::(?:OPT_|RES_|HAVE_|SERIALIZER_|DISTRIBUTION_|HASH_|GET_)"
+    ],
+    "notes": "ext-memcached only (not the older ext-memcache). Library cache back-ends are optional."
+  }
+]

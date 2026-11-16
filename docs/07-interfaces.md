@@ -7,6 +7,7 @@ leapcheck scan-dir  --path <dir> --name <name> --version <v> --ecosystem <eco> -
 leapcheck export    --out <dir>               # writes static JSON (below) for every stored result
 leapcheck runs      [--id <run-id>] [--failed] # trace viewer: list runs or show one run's steps
 leapcheck health                               # daily health report (JSON): runs, failure rate, top errors, slowest steps
+leapcheck site      --out <dir> [--base-url URL] # builds the static website (HTML pages, sitemap) from the exported JSON in <dir>
 ```
 Logs: one JSON object per line on stderr: `{"ts","level","run_id","step","msg","attrs"}`.
 
@@ -22,6 +23,8 @@ Index: `/v1/{ecosystem}/{name}/index.json` lists the scanned versions and the la
   "version": "5.1",
   "scanned_at": "2026-11-02T12:00:00Z",
   "engine_version": "0.1.0",
+  "display_name": "Contact Form 7",
+  "active_installs": 10000000,
   "targets": {
     "php:8.4": {
       "verdict": "compatible | issues | breaks | unknown",
@@ -43,6 +46,8 @@ Index: `/v1/{ecosystem}/{name}/index.json` lists the scanned versions and the la
   ]
 }
 ```
+Severities: `error` (breaks on target), `warning` (deprecated, still runs), `info` (guarded legacy code: only runs when the old feature exists, e.g. inside `function_exists()`/`extension_loaded()`/a PHP version check, so it is skipped on newer PHP; not counted in the verdict).
+
 Verdict rules: `breaks` = ≥1 error · `issues` = only warnings (deprecations; still runs) · `compatible` = none · `unknown` = could not scan (e.g. encoded files).
 Targets in phase 1: `php:8.3`, `php:8.4`, `php:8.5`.
 

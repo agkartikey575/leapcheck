@@ -50,13 +50,17 @@ impl Analyzer for PhpCompatibility {
             .arg(root)
             .output()
             .context("running phpcs")?;
-        // phpcs exits 0 (clean), 1/2 (issues found). Anything else is a real failure.
+        // PHPCS exit codes are bit flags (1 = issues, 2 = fixable issues, higher bits = processing
+        // problems). Trust the JSON report: if it parsed and has totals, the scan ran.
         let code = out.status.code().unwrap_or(-1);
-        if !(0..=2).contains(&code) {
-            bail!("phpcs failed (exit {code}): {}", String::from_utf8_lossy(&out.stderr));
-        }
-        let report: serde_json::Value = serde_json::from_slice(&out.stdout)
-            .with_context(|| format!("phpcs output was not JSON: {}", String::from_utf8_lossy(&out.stdout).chars().take(300).collect::<String>()))?;
+        let report: serde_json::Value = match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+            Ok(v) if v.get("totals").is_some() => v,
+            _ => bail!(
+                "phpcs failed (exit {code}): {} {}",
+                String::from_utf8_lossy(&out.stderr).chars().take(300).collect::<String>(),
+                String::from_utf8_lossy(&out.stdout).chars().take(300).collect::<String>()
+            ),
+        };
         let mut findings = vec![];
         if let Some(files) = report.get("files").and_then(|f| f.as_object()) {
             for (file, v) in files {

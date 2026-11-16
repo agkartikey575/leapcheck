@@ -1,0 +1,13 @@
+[
+  {
+    "rule_id": "PHPCompatibility.Interfaces.InternalInterfaces.datetimeinterfaceFound",
+    "path_regex": "(?i)CarbonInterface\\.php$",
+    "reason": "Carbon's CarbonInterface is an interface that extends DateTimeInterface, which is valid PHP. Only classes may not implement DateTimeInterface directly; Carbon's classes extend DateTime/DateTimeImmutable."
+  },
+  {
+    "rule_id": "PHPCompatibility.FunctionUse.ArgumentFunctionsReportCurrentValue.Changed",
+    "path_regex": ".*",
+    "action": "warning",
+    "reason": "behaviour change since PHP 7.0: the code still runs, but func_get_args() and similar may report a changed value"
+  }
+]

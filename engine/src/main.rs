@@ -4,6 +4,7 @@ mod db;
 mod detect;
 mod model;
 mod php;
+mod site;
 mod trace;
 
 use anyhow::{bail, Context, Result};
@@ -67,6 +68,14 @@ enum Cmd {
         #[arg(long, default_value = "public")]
         out: PathBuf,
     },
+    /// Generate the static website (HTML pages + sitemap) from stored results
+    Site {
+        #[arg(long, default_value = "public")]
+        out: PathBuf,
+        /// Public base URL used in canonical links and the sitemap
+        #[arg(long, default_value = "https://leapcheck.vercel.app")]
+        base_url: String,
+    },
     /// List runs, or show one run's full trace
     Runs {
         #[arg(long)]
@@ -122,6 +131,13 @@ fn run(cli: Cli) -> Result<()> {
             println!("{}", json!({"exported_files": n, "out": out}));
             Ok(())
         }
+        Cmd::Site { out, base_url } => {
+            let run = trace::Run::start(&conn, "site", json!({"out": out}))?;
+            let res = run.step("site", || site::generate(&cli.rules, out, base_url));
+            run.finish(&res.as_ref().map(|_| ()).map_err(|e| anyhow::anyhow!("{e:#}")))?;
+            println!("{}", json!({"pages": res?, "out": out}));
+            Ok(())
+        }
         Cmd::Runs { id, failed, limit } => show_runs(&conn, id.clone(), *failed, *limit),
         Cmd::Health { hours } => health(&conn, *hours),
     }
@@ -138,17 +154,35 @@ fn http() -> ureq::Agent {
         .build()
 }
 
-fn latest_version(eco: &str, slug: &str) -> Result<String> {
+/// Package metadata from the official WordPress.org API.
+pub struct WpInfo {
+    pub version: String,
+    pub display_name: Option<String>,
+    pub active_installs: Option<i64>,
+    pub tags: Vec<String>,
+}
+
+fn wp_info(eco: &str, slug: &str) -> Result<WpInfo> {
     let url = if eco == "wordpress-plugin" {
-        format!("https://api.wordpress.org/plugins/info/1.2/?action=plugin_information&request[slug]={slug}&request[fields][sections]=0")
+        format!("https://api.wordpress.org/plugins/info/1.2/?action=plugin_information&request[slug]={slug}&request[fields][sections]=0&request[fields][active_installs]=1")
     } else {
-        format!("https://api.wordpress.org/themes/info/1.2/?action=theme_information&request[slug]={slug}&request[fields][sections]=0")
+        format!("https://api.wordpress.org/themes/info/1.2/?action=theme_information&request[slug]={slug}&request[fields][sections]=0&request[fields][active_installs]=1")
     };
     let v: serde_json::Value = serde_json::from_str(&http().get(&url).call()?.into_string()?)?;
     if let Some(e) = v.get("error") {
         bail!("WordPress.org: {e}");
     }
-    v.get("version").and_then(|x| x.as_str()).map(String::from).context("no version in API response")
+    let tags = match v.get("tags") {
+        Some(serde_json::Value::Object(m)) => m.values().filter_map(|x| x.as_str().map(String::from)).collect(),
+        Some(serde_json::Value::Array(a)) => a.iter().filter_map(|x| x.as_str().map(String::from)).collect(),
+        _ => vec![],
+    };
+    Ok(WpInfo {
+        version: v.get("version").and_then(|x| x.as_str()).map(String::from).context("no version in API response")?,
+        display_name: v.get("name").and_then(|x| x.as_str()).map(|s| site::decode_entities(s)),
+        active_installs: v.get("active_installs").and_then(|x| x.as_i64()),
+        tags,
+    })
 }
 
 fn download(eco: &str, slug: &str, version: &str, dest: &Path) -> Result<Vec<u8>> {
@@ -193,10 +227,13 @@ fn unzip(bytes: &[u8], dest: &Path) -> Result<u64> {
 }
 
 fn scan_wp(cli: &Cli, conn: &Connection, run: &trace::Run, eco: &str, slug: &str, version: Option<String>, targets: &[String]) -> Result<()> {
-    let version = match version {
-        Some(v) => v,
-        None => run.step("resolve_version", || latest_version(eco, slug))?,
-    };
+    let info = run.step("resolve_version", || wp_info(eco, slug))?;
+    conn.execute(
+        "INSERT INTO package_meta (ecosystem, name, display_name, active_installs, tags, updated_at) VALUES (?1,?2,?3,?4,?5,?6)
+         ON CONFLICT(ecosystem, name) DO UPDATE SET display_name=excluded.display_name, active_installs=excluded.active_installs, tags=excluded.tags, updated_at=excluded.updated_at",
+        params![eco, slug, info.display_name, info.active_installs, serde_json::to_string(&info.tags)?, chrono::Utc::now().to_rfc3339()],
+    )?;
+    let version = version.unwrap_or(info.version);
     run.note("resolve_version", &format!("{slug}@{version}"))?;
     let work = std::env::temp_dir().join(format!("leapcheck-{}", run.id));
     let bytes = run.step("fetch", || download(eco, slug, &version, &work))?;
@@ -250,6 +287,9 @@ fn scan_root(cli: &Cli, conn: &Connection, run: &trace::Run, eco: &str, name: &s
         for f in findings.iter_mut() {
             f.component = detect::attribute(&f.file, &components);
         }
+        detect::apply_suppressions(&cli.rules, &mut findings);
+        detect::apply_guards(root, &mut findings);
+        detect::apply_fallbacks(root, &mut findings);
         per_target.push((t.clone(), findings));
     }
     run.step("store", || store(conn, &run.id, eco, name, version, &components, &requirements, &per_target, encoded))?;
@@ -276,7 +316,7 @@ fn store(conn: &Connection, run_id: &str, eco: &str, name: &str, version: &str, 
     for (t, findings) in per_target {
         let target = format!("php:{t}");
         let errors = findings.iter().filter(|f| f.severity == "error").count() as i64;
-        let warnings = findings.len() as i64 - errors;
+        let warnings = findings.iter().filter(|f| f.severity == "warning").count() as i64;
         let verdict = if errors > 0 {
             "breaks"
         } else if encoded > 0 {
@@ -343,8 +383,13 @@ fn export(conn: &Connection, out: &Path) -> Result<usize> {
             .prepare("SELECT name, evidence_file, evidence_line FROM requirement WHERE package_version_id=?1 ORDER BY name")?
             .query_map(params![pv], |r| Ok(json!({"name": r.get::<_, String>(0)?, "evidence_file": r.get::<_, String>(1)?, "evidence_line": r.get::<_, i64>(2)?})))?
             .collect::<Result<_, _>>()?;
+        let meta: Option<(Option<String>, Option<i64>)> = conn
+            .query_row("SELECT display_name, active_installs FROM package_meta WHERE ecosystem=?1 AND name=?2", params![eco, name], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?;
+        let (display_name, active_installs) = meta.unwrap_or((None, None));
         let doc = json!({
             "schema": 1, "ecosystem": eco, "name": name, "version": version, "scanned_at": scanned_at,
+            "display_name": display_name, "active_installs": active_installs,
             "engine_version": trace::ENGINE_VERSION, "targets": targets, "components": comps, "requirements": reqs
         });
         let dir = out.join("v1").join(&eco).join(&name);

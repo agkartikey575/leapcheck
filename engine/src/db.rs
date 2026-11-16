@@ -8,6 +8,7 @@ pub fn open(path: &str) -> Result<Connection> {
         std::fs::create_dir_all(dir)?;
     }
     let conn = Connection::open(path)?;
+    conn.busy_timeout(std::time::Duration::from_secs(60))?;
     conn.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;
@@ -81,6 +82,16 @@ pub fn open(path: &str) -> Result<Connection> {
             path                  TEXT NOT NULL,
             detection             TEXT NOT NULL,
             known_vulnerabilities INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS package_meta (
+            ecosystem       TEXT NOT NULL,
+            name            TEXT NOT NULL,
+            display_name    TEXT,
+            active_installs INTEGER,
+            tags            TEXT,                    -- json array
+            updated_at      TEXT NOT NULL,
+            PRIMARY KEY (ecosystem, name)
         );
 
         CREATE TABLE IF NOT EXISTS requirement (

@@ -1,0 +1,126 @@
+# CI: build + test the Rust engine, install the PHP analysis tools, lint the WordPress plugin.
+# Runs on every push and pull request. No secrets are used here (safe for fork PRs).
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  engine:
+    name: Engine (Rust build + test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            engine/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('engine/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Build (release)
+        run: cargo build --release --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Validate test corpus JSON
+        working-directory: .
+        run: |
+          jq -e 'type == "array" and length > 0 and all(.[]; has("slug") and has("version") and has("kind") and has("why"))' \
+            engine/tests/corpus.json > /dev/null
+
+  php-tools:
+    name: PHP tools (PHPCompatibility via PHP_CodeSniffer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer:v2
+          coverage: none
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/composer/files
+          key: composer-${{ runner.os }}-${{ hashFiles('tools/php/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Install PHP tools
+        working-directory: tools/php
+        # --no-plugins: never run Composer plugins/scripts from dependencies.
+        run: composer install --no-plugins --no-interaction --no-progress --prefer-dist
+
+      - name: Register PHPCompatibility standards with phpcs
+        working-directory: tools/php
+        run: |
+          vendor/bin/phpcs --config-set installed_paths ../../phpcompatibility/php-compatibility,../../phpcsstandards/phpcsutils
+          vendor/bin/phpcs -i
+          vendor/bin/phpcs -i | grep -q PHPCompatibility
+
+      - name: Smoke test PHPCompatibility on a known-bad snippet
+        working-directory: tools/php
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke"
+          printf '<?php\n$f = create_function("$a", "return $a;");\n' > "$RUNNER_TEMP/smoke/bad.php"
+          # phpcs exits non-zero when it finds issues; we expect it to find create_function().
+          if vendor/bin/phpcs --standard=PHPCompatibility --runtime-set testVersion 8.4 --report=json "$RUNNER_TEMP/smoke/bad.php" > "$RUNNER_TEMP/smoke/out.json"; then
+            echo "::error::PHPCompatibility found nothing in a known-bad file"; exit 1
+          fi
+          jq -e '.totals.errors >= 1' "$RUNNER_TEMP/smoke/out.json"
+
+  plugin-lint:
+    name: WordPress plugin (php -l)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # Lowest PHP we intend to support for the plugin, plus the newest targets.
+        php: ["7.4", "8.3", "8.4"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: Lint every PHP file under plugin/
+        run: |
+          if [ ! -d plugin ]; then
+            echo "::notice::plugin/ does not exist yet; nothing to lint."
+            exit 0
+          fi
+          status=0
+          while IFS= read -r -d '' f; do
+            php -l "$f" > /dev/null || { echo "::error file=$f::php -l failed"; status=1; }
+          done < <(find plugin -type f -name '*.php' -print0)
+          exit $status
