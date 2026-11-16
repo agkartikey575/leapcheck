@@ -1,21 +1,26 @@
-# Nightly batch scan of WordPress.org plugins, sharded across a job matrix, then a static deploy to Vercel.
+# Nightly batch scan of WordPress.org plugins and themes, sharded across a job matrix, published as a
+# static site on the `site` branch (the host deploys that branch).
 #
-# Flow:  plan (shard matrix) -> build (leapcheck binary, once) -> scan (N shards in parallel)
-#        -> publish (merge exported JSON trees, validate, deploy public/ to Vercel)
+# Flow:  plan (previous site + WordPress.org latest versions -> only what is new; shard matrix)
+#        -> build (leapcheck binary, once) -> scan (N shards in parallel)
+#        -> publish (previous site's v1/ + new shard JSON, validate, generate HTML, push to `site`)
+#
+# Incremental: an entry is scanned only if v1/wordpress-{kind}/{slug}/{version}.json is not already in the
+# `site` branch. Everything is rescanned when `force_full` is set, when there is no previous site, or when
+# engine/ or tools/php/composer.lock changed since the engine commit recorded in v1/_meta.json.
 #
 # Security model (see docs/ops/runbook.md):
-#  - Plugin code is untrusted. It is downloaded and parsed, never executed. The scan jobs get NO secrets
-#    and a read-only GITHUB_TOKEN; only the publish job sees the Vercel secrets, and it only handles
-#    the JSON produced by our own engine.
+#  - Plugin code is untrusted. It is downloaded and parsed, never executed. No job gets any secret; scan
+#    jobs get a read-only GITHUB_TOKEN. Only the publish job can write (contents: write, to push the `site`
+#    branch), and it only handles JSON produced by our own engine plus the previous site's JSON.
+#  - Only our engine writes HTML: publish takes only v1/ from the previous site, rejects anything that is
+#    not a regular .json file, and runs `leapcheck site` last.
 #  - Each shard writes its own SQLite file; only the exported JSON trees are merged.
-#
-# Secrets (repository -> Settings -> Secrets and variables -> Actions):
-#   VERCEL_TOKEN       Vercel access token scoped to the LeapCheck team/project
-#   VERCEL_ORG_ID      Vercel team/user id      (from `vercel link` -> .vercel/project.json "orgId")
-#   VERCEL_PROJECT_ID  Vercel project id        (from `vercel link` -> .vercel/project.json "projectId")
+#  - No `${{ }}` expressions inside run scripts: values reach the shell as environment variables only.
 #
 # Free-tier notes: standard GitHub-hosted runners are free for public repositories; each job is capped at
-# 6 h (we stop at 5.5 h) and the Free plan allows 20 concurrent jobs, so shards are capped at 20.
+# 6 h (shards stop starting new scans after SCAN_BUDGET_MIN and are killed at 5.5 h) and the Free plan
+# allows 20 concurrent jobs, so shards are capped at 20.
 name: Nightly scan
 
 on:
@@ -28,11 +33,16 @@ on:
         required: false
         default: "4"
       list:
-        description: "Slug list (JSON array of {slug,version?,kind?} objects or plain slug strings)"
+        description: "Space-separated slug lists (JSON arrays of {slug,version?,kind?} objects or plain plugin slugs); missing files are skipped"
         required: false
-        default: "lists/top-plugins.json"
+        default: "lists/top-plugins.json lists/top-themes.json"
+      force_full:
+        description: "Rescan everything in the lists, even versions already published (e.g. after a rules change)"
+        type: boolean
+        required: false
+        default: false
       deploy:
-        description: "Deploy public/ to Vercel after the scan"
+        description: "Publish to the site branch after the scan"
         type: boolean
         required: false
         default: true
@@ -46,35 +56,214 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  SLUG_LIST: ${{ inputs.list || 'lists/top-plugins.json' }}
+  SLUG_LISTS: ${{ inputs.list || 'lists/top-plugins.json lists/top-themes.json' }}
   TARGETS: "8.3,8.4,8.5" # scan-wp --target takes a comma-separated list: one download, three targets
+  # Paths whose change since the recorded engine commit forces a full rescan (git pathspecs).
+  ENGINE_PATHS: "engine/ tools/php/composer.lock :(exclude)engine/tests :(exclude,glob)engine/**/*.md"
 
 jobs:
   plan:
-    name: Plan shards
+    name: Plan (incremental)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 45
     outputs:
       shards: ${{ steps.plan.outputs.shards }}
       total: ${{ steps.plan.outputs.total }}
+      todo: ${{ steps.plan.outputs.todo }}
+      mode: ${{ steps.mode.outputs.mode }}
     steps:
       - uses: actions/checkout@v4
-      - id: plan
+        with:
+          fetch-depth: 0 # full history, to diff engine/ against the commit recorded by the last site build
+
+      - name: Read the previous site build
+        id: prev
+        run: |
+          P="$RUNNER_TEMP/plan"; echo "P=$P" >> "$GITHUB_ENV" # uploaded as the scan-plan artifact
+          mkdir -p "$P"
+          echo '{}' > "$P/prev-meta.json"
+          : > "$P/prev-files.txt"
+          set +e; git ls-remote --exit-code --heads origin site > /dev/null; rc=$?; set -e
+          if [ "$rc" -eq 2 ]; then
+            echo "No site branch yet"; echo "exists=false" >> "$GITHUB_OUTPUT"; exit 0
+          elif [ "$rc" -ne 0 ]; then
+            echo "::error::cannot reach the site branch (git ls-remote exit $rc)"; exit 1
+          fi
+          git fetch --no-tags origin site # one orphan commit; no --depth, to keep this clone unshallow
+          git ls-tree -r --name-only FETCH_HEAD -- v1/ > "$P/prev-files.txt"
+          git show FETCH_HEAD:v1/_meta.json > "$P/prev-meta.json" 2>/dev/null || echo '{}' > "$P/prev-meta.json"
+          jq -e 'type == "object"' "$P/prev-meta.json" > /dev/null || echo '{}' > "$P/prev-meta.json"
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+          echo "Previous site $(git rev-parse --short FETCH_HEAD): $(wc -l < "$P/prev-files.txt") files under v1/"
+
+      - name: Decide full or incremental
+        id: mode
+        env:
+          FORCE_FULL: ${{ inputs.force_full && 'true' || 'false' }}
+          SITE_EXISTS: ${{ steps.prev.outputs.exists }}
+        run: |
+          prev_sha=$(jq -r '.engine_sha // empty' "$P/prev-meta.json")
+          read -r -a paths <<<"$ENGINE_PATHS"
+          if [ "$FORCE_FULL" = "true" ]; then
+            mode=full; reason="force_full requested"
+          elif [ "$SITE_EXISTS" != "true" ]; then
+            mode=full; reason="no previous site"
+          elif ! [[ "$prev_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            mode=full; reason="previous site has no engine_sha in v1/_meta.json"
+          elif ! git cat-file -e "${prev_sha}^{commit}" 2>/dev/null; then
+            mode=full; reason="recorded engine commit $prev_sha is not in this repository's history"
+          elif ! git diff --quiet "$prev_sha" HEAD -- "${paths[@]}"; then
+            mode=full; reason="engine changed since $prev_sha"
+            git diff --stat "$prev_sha" HEAD -- "${paths[@]}" | tail -n 15
+          else
+            mode=incremental; reason="engine unchanged since $prev_sha"
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          jq -n --arg mode "$mode" --arg reason "$reason" --arg prev "$prev_sha" \
+            '{mode: $mode, reason: $reason, prev_engine_sha: (if $prev == "" then null else $prev end)}' > "$P/mode.json"
+          echo "::notice::Scan mode: $mode ($reason)"
+
+      - name: Build the scan plan
+        id: plan
         env:
           REQUESTED: ${{ inputs.shards || '10' }}
+          MODE: ${{ steps.mode.outputs.mode }}
+          # Trimmed WordPress.org API responses: we only need slug and version.
+          TRIM: "request[fields][sections]=0&request[fields][description]=0&request[fields][short_description]=0&request[fields][tags]=0&request[fields][ratings]=0&request[fields][icons]=0&request[fields][banners]=0&request[fields][screenshots]=0&request[fields][contributors]=0&request[fields][versions]=0&request[fields][compatibility]=0&request[fields][donate_link]=0&request[fields][reviews]=0&request[fields][screenshot_url]=0&request[fields][theme_url]=0"
         run: |
-          test -f "$SLUG_LIST" || { echo "::error::slug list $SLUG_LIST not found"; exit 1; }
-          jq -e 'type == "array"' "$SLUG_LIST" > /dev/null
+          # 1. Read and normalise the lists. Plain strings are plugin slugs. Lists are data, never shell.
+          : > "$P/entries.jsonl"; lists=()
+          for f in $SLUG_LISTS; do
+            if ! [[ "$f" =~ ^[A-Za-z0-9._/-]+\.json$ ]] || [[ "$f" == *..* ]]; then echo "::error::bad list path: $f"; exit 1; fi
+            if [ ! -f "$f" ]; then echo "::notice::list $f not found; skipped"; continue; fi
+            jq -e 'type == "array"' "$f" > /dev/null || { echo "::error::$f is not a JSON array"; exit 1; }
+            jq -c '.[] | if type == "string" then {slug: .} else . end
+                   | {kind: (.kind // "plugin"), slug, version}' "$f" >> "$P/entries.jsonl"
+            lists+=("$f")
+          done
+          [ "${#lists[@]}" -gt 0 ] || { echo "::error::none of the lists exist: $SLUG_LISTS"; exit 1; }
+          # Same validation as the scan loop (defence in depth); invalid entries never reach a URL.
+          jq -sc 'unique_by([.kind, .slug, .version]) | .[]' "$P/entries.jsonl" > "$P/all.jsonl"
+          jq -c 'select((.kind | test("^(plugin|theme)$")) and (.slug | test("^[a-z0-9][a-z0-9-]{0,199}$"))
+                        and (.version == null or (.version | test("^[A-Za-z0-9._-]{1,50}$"))))' "$P/all.jsonl" > "$P/valid.jsonl"
+          invalid=$(( $(wc -l < "$P/all.jsonl") - $(wc -l < "$P/valid.jsonl") ))
+          [ "$invalid" -eq 0 ] || echo "::warning::$invalid invalid list entries skipped"
+
+          # 2. Latest version per slug from the official WordPress.org API, for entries without a pinned
+          #    version: batch pages of the "popular" browse (250 per request), then one trimmed
+          #    *_information call per slug not found there. A 404 means closed/removed: not scanned.
+          #    A network failure leaves the entry unresolved: it is scanned and scan-wp resolves it.
+          lookup() {
+            local kind=$1 base act key info need="$P/need-$1.txt" seen="$P/seen-$1.tsv" out="$P/found-$1.tsv"
+            jq -r --arg k "$kind" 'select(.kind == $k and .version == null) | .slug' "$P/valid.jsonl" | sort -u > "$need"
+            : > "$seen"; : > "$out"
+            [ -s "$need" ] || return 0
+            if [ "$kind" = plugin ]; then
+              base=https://api.wordpress.org/plugins/info/1.2/; act=query_plugins; key=plugins; info=plugin_information
+            else
+              base=https://api.wordpress.org/themes/info/1.2/; act=query_themes; key=themes; info=theme_information
+            fi
+            local n page=1 max pages
+            n=$(wc -l < "$need"); max=$(( (n + 249) / 250 + 2 ))
+            while [ "$page" -le "$max" ]; do
+              if ! curl -gfsS --retry 3 --retry-delay 10 -m 120 -o "$P/page.json" \
+                   "${base}?action=${act}&request[browse]=popular&request[per_page]=250&request[page]=${page}&${TRIM}"; then
+                echo "::warning::WordPress.org $act page $page failed; falling back to per-slug lookups"; break
+              fi
+              jq -r --arg k "$key" '.[$k][]? | [.slug, .version] | @tsv' "$P/page.json" >> "$seen"
+              pages=$(jq -r '.info.pages // 0' "$P/page.json")
+              [ "$page" -ge "$pages" ] && break
+              [ -z "$(cut -f1 "$seen" | grep -vxFf - "$need" | head -n 1)" ] && break
+              page=$((page + 1)); sleep 1
+            done
+            # keep only the slugs we need
+            awk -F'\t' 'NR == FNR { need[$1] = 1; next } ($1 in need) && !(($1) in done) { print; done[$1] = 1 }' "$need" "$seen" > "$out"
+            local left=0 errs=0 slug code
+            while IFS= read -r slug; do
+              # Circuit breaker: after 5 failures in a row the API is down; leave the rest unresolved.
+              [ "$errs" -ge 5 ] && { echo "::warning::WordPress.org API failing; remaining $kind slugs left unresolved"; break; }
+              left=$((left + 1))
+              code=$(curl -gsS --retry 2 --retry-delay 5 -m 60 -o "$P/one.json" -w '%{http_code}' \
+                     "${base}?action=${info}&request[slug]=${slug}&${TRIM}" || true)
+              if [ "$code" = 200 ] && jq -e '.version | type == "string"' "$P/one.json" > /dev/null 2>&1; then
+                printf '%s\t%s\n' "$slug" "$(jq -r .version "$P/one.json")" >> "$out"; errs=0
+              elif [ "$code" = 404 ]; then
+                printf '%s\t!unavailable\n' "$slug" >> "$out"; errs=0
+                echo "::warning::$kind $slug is not available on WordPress.org: $(jq -r '.error // "not found"' "$P/one.json" 2>/dev/null | head -c 100)"
+              else
+                echo "::warning::could not resolve the latest version of $kind $slug (HTTP $code)"; errs=$((errs + 1))
+              fi
+              sleep 0.3
+            done < <(cut -f1 "$out" | grep -vxFf - "$need" || true)
+            echo "$kind: $n to resolve, $(grep -vc $'\t!' "$out" || true) resolved, $left looked up one by one"
+          }
+          lookup plugin
+          lookup theme
+
+          # 3. Keep what is not yet published (everything in full mode). In incremental mode an entry whose
+          #    latest version could not be resolved is scanned only if nothing of it is published yet, so a
+          #    WordPress.org API outage does not turn into a full rescan; it is retried next run.
+          jq -n -c --arg mode "$MODE" \
+             --rawfile files "$P/prev-files.txt" \
+             --rawfile fp "$P/found-plugin.tsv" --rawfile ft "$P/found-theme.tsv" \
+             --slurpfile entries "$P/valid.jsonl" '
+            def tsv($kind): split("\n") | map(select(length > 0) | split("\t") | {key: ($kind + "/" + .[0]), value: .[1]});
+            (($fp | tsv("plugin")) + ($ft | tsv("theme")) | from_entries) as $found
+            | ($files | split("\n") | map(select(length > 0) | {key: ., value: true}) | from_entries) as $have
+            | [ $entries[]
+                | . as $e
+                | ($found[$e.kind + "/" + $e.slug]) as $v
+                | if $e.version != null then $e
+                  elif $v == null then $e + {unresolved: true}
+                  elif ($v | startswith("!")) then $e + {unavailable: true}
+                  elif ($v | test("^[A-Za-z0-9._-]{1,50}$")) then $e + {version: $v}
+                  else $e + {unresolved: true} end
+                | .dir = "v1/wordpress-\(.kind)/\(.slug)/"
+                | .action = if .unavailable then "unavailable"
+                            elif $mode == "full" then "scan"
+                            elif .unresolved then (if $have[.dir + "index.json"] then "unresolved" else "scan" end)
+                            elif $have[.dir + .version + ".json"] then "skip"
+                            else "scan" end ]
+            | {
+                unavailable: map(select(.action == "unavailable")) | length,
+                unresolved_deferred: map(select(.action == "unresolved")) | length,
+                skipped: map(select(.action == "skip")) | length,
+                todo: map(select(.action == "scan") | {kind, slug} + (if .version then {version} else {} end))
+              }' > "$P/plan-raw.json"
+          jq -c '.todo' "$P/plan-raw.json" > "$P/todo.json"
+          todo=$(jq length "$P/todo.json")
+          jq -n --argjson raw "$(jq -c 'del(.todo)' "$P/plan-raw.json")" --argjson todo "$todo" \
+                --argjson entries "$(wc -l < "$P/valid.jsonl")" --argjson invalid "$invalid" \
+                --slurpfile mode "$P/mode.json" --arg lists "${lists[*]}" \
+            '$mode[0] + {lists: ($lists | split(" ")), list_entries: $entries, invalid: $invalid,
+                         unavailable: $raw.unavailable, unresolved_deferred: $raw.unresolved_deferred, skipped_unchanged: $raw.skipped, planned: $todo}' > "$P/summary.json"
+          rm -f "$P/plan-raw.json" "$P/page.json" "$P/one.json"
+
+          # 4. Shards: never more than there is work, capped at 20 (Free plan concurrency).
           n="$REQUESTED"
           case "$n" in ''|*[!0-9]*) echo "::error::shards must be a number"; exit 1;; esac
           [ "$n" -lt 1 ] && n=1
           [ "$n" -gt 20 ] && n=20
-          echo "shards=$(jq -cn --argjson n "$n" '[range(0; $n)]')" >> "$GITHUB_OUTPUT"
-          echo "total=$n" >> "$GITHUB_OUTPUT"
-          echo "Planned $n shard(s) over $(jq length "$SLUG_LIST") entries from $SLUG_LIST"
+          [ "$todo" -gt 0 ] && [ "$n" -gt "$todo" ] && n=$todo
+          {
+            echo "shards=$(jq -cn --argjson n "$n" '[range(0; $n)]')"
+            echo "total=$n"
+            echo "todo=$todo"
+          } >> "$GITHUB_OUTPUT"
+          jq . "$P/summary.json"
+          echo "::notice::$todo of $(wc -l < "$P/valid.jsonl") entries to scan in $n shard(s) ($MODE)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan-plan
+          path: ${{ runner.temp }}/plan/
+          retention-days: 14
+          if-no-files-found: error
 
   build:
     name: Build leapcheck
+    needs: plan
+    if: needs.plan.outputs.todo != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -113,6 +302,9 @@ jobs:
       TOTAL: ${{ needs.plan.outputs.total }}
       # Each shard writes its own SQLite file; every leapcheck subcommand takes --db.
       DB: data/shard-${{ matrix.shard }}.sqlite
+      # Stop starting new scans after this many minutes so export and upload always run before the
+      # 330-minute job limit (one scan can take up to 20 min). Unstarted entries are picked up next night.
+      SCAN_BUDGET_MIN: "290"
     steps:
       - uses: actions/checkout@v4
 
@@ -121,6 +313,11 @@ jobs:
           name: leapcheck-bin
           path: engine/target/release
       - run: chmod +x engine/target/release/leapcheck
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: scan-plan
+          path: ${{ runner.temp }}/plan
 
       - uses: shivammathur/setup-php@v2
         with:
@@ -142,22 +339,23 @@ jobs:
           vendor/bin/phpcs -i | grep -q PHPCompatibility
 
       - name: Select this shard's entries
-        # Shard by unique slug (not by entry) so every version of one plugin lands in the same shard;
+        # Shard by unique slug (not by entry) so every version of one package lands in the same shard;
         # that keeps each /v1/{ecosystem}/{name}/ directory (incl. index.json) owned by exactly one shard.
         run: |
           jq -c --argjson shard "$SHARD" --argjson total "$TOTAL" '
-            map(if type == "string" then {slug: .} else . end)
-            | (map(.slug) | unique) as $slugs
+            (map(.slug) | unique) as $slugs
             | [ $slugs | to_entries[] | select(.key % $total == $shard) | .value ] as $mine
             | map(select(.slug | IN($mine[])))
-            | .[]' "$SLUG_LIST" > "$RUNNER_TEMP/entries.jsonl"
+            | .[]' "$RUNNER_TEMP/plan/todo.json" > "$RUNNER_TEMP/entries.jsonl"
           echo "Shard $SHARD/$TOTAL: $(wc -l < "$RUNNER_TEMP/entries.jsonl") entries"
 
       - name: Scan
         run: |
           mkdir -p data logs
-          ok=0; failed=0
+          ok=0; failed=0; deferred=0
+          deadline=$((SECONDS + SCAN_BUDGET_MIN * 60))
           while IFS= read -r entry; do
+            if [ "$SECONDS" -ge "$deadline" ]; then deferred=$((deferred + 1)); continue; fi
             slug=$(jq -r '.slug' <<<"$entry")
             version=$(jq -r '.version // empty' <<<"$entry")
             kind=$(jq -r '.kind // "plugin"' <<<"$entry")
@@ -172,28 +370,45 @@ jobs:
               ok=$((ok+1))
             else
               failed=$((failed+1))
-              echo "::warning::scan failed: $slug ${version:-latest} (see logs/shard-$SHARD.jsonl)"
+              echo "::warning::scan failed: $kind $slug ${version:-latest} (see logs/shard-$SHARD.jsonl)"
             fi
             sleep 1 # be polite to downloads.wordpress.org
           done < "$RUNNER_TEMP/entries.jsonl"
-          echo "ok=$ok failed=$failed"
+          [ "$deferred" -eq 0 ] || echo "::warning::time budget reached: $deferred entries deferred to the next run"
+          echo "ok=$ok failed=$failed deferred=$deferred"
+          mkdir -p stats
+          jq -n --argjson shard "$SHARD" --argjson ok "$ok" --argjson failed "$failed" --argjson deferred "$deferred" \
+            '{shard: $shard, ok: $ok, failed: $failed, deferred: $deferred}' > "stats/shard-$SHARD.json"
           echo "SCAN_OK=$ok" >> "$GITHUB_ENV"
           echo "SCAN_FAILED=$failed" >> "$GITHUB_ENV"
 
       - name: Export static JSON
+        if: always()
         # export prints {"exported_files":N,"out":...} on stdout and writes nothing when N is 0.
         run: |
+          mkdir -p logs
+          [ -f "$DB" ] || { echo "no database: nothing scanned"; exit 0; }
           engine/target/release/leapcheck export --db "$DB" --out public 2>>"logs/shard-$SHARD.jsonl"
           engine/target/release/leapcheck health --db "$DB" --hours 24 > "logs/health-shard-$SHARD.json" 2>>"logs/shard-$SHARD.jsonl" || true
           engine/target/release/leapcheck runs --db "$DB" --failed --limit 500 > "logs/failed-runs-shard-$SHARD.txt" 2>>"logs/shard-$SHARD.jsonl" || true
 
       - name: Upload exported JSON
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: public-shard-${{ matrix.shard }}
           path: public/
           retention-days: 3
           if-no-files-found: warn
+
+      - name: Upload shard stats
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stats-shard-${{ matrix.shard }}
+          path: stats/
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Upload traces (SQLite + logs)
         if: always()
@@ -207,8 +422,9 @@ jobs:
           if-no-files-found: ignore
 
       - name: Fail shard if most scans failed
-        # Isolated plugin failures are expected and recorded as runs; a mostly-failed shard means
-        # something systemic (network, engine bug) and must block the deploy.
+        # Isolated plugin failures are expected and recorded as runs; a mostly-failed shard means something
+        # systemic (network, engine bug). The job turns red; publish still keeps this shard's successful
+        # results and the previous results of everything else, and unscanned entries retry next night.
         run: |
           total=$((SCAN_OK + SCAN_FAILED))
           if [ "$total" -gt 0 ] && [ $((SCAN_FAILED * 2)) -gt "$total" ]; then
@@ -216,14 +432,23 @@ jobs:
           fi
 
   publish:
-    name: Merge and deploy
-    needs: [build, scan]
+    name: Merge and publish
+    needs: [plan, build, scan]
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # Never deploy from forks or non-default branches.
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    timeout-minutes: 30
+    # Never publish from forks or non-default branches. Runs even if some shards failed: the previous
+    # site is the base, so a failed shard only means its entries keep their previous results.
+    if: >-
+      always()
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && needs.plan.result == 'success' && needs.build.result == 'success'
+      && (needs.scan.result == 'success' || needs.scan.result == 'failure')
+    env:
+      MODE: ${{ needs.plan.outputs.mode }}
+      TOTAL: ${{ needs.plan.outputs.total }}
+      SCAN_RESULT: ${{ needs.scan.result }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -233,35 +458,97 @@ jobs:
       - run: chmod +x engine/target/release/leapcheck
       - uses: actions/download-artifact@v4
         with:
+          name: scan-plan
+          path: ${{ runner.temp }}/plan
+      - uses: actions/download-artifact@v4
+        with:
           pattern: public-shard-*
           path: shards
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stats-shard-*
+          path: ${{ runner.temp }}/stats
+          merge-multiple: true
 
-      - name: Merge exported JSON trees
+      - name: Start from the previous site's v1/ tree
+        # Only v1/ (JSON) is taken; all HTML is regenerated by our engine below.
         run: |
           mkdir -p public
-          [ -d shards ] || { echo "::error::no shard output downloaded"; exit 1; }
+          set +e; git ls-remote --exit-code --heads origin site > /dev/null; rc=$?; set -e
+          if [ "$rc" -eq 2 ]; then echo "No previous site: starting empty"; exit 0; fi
+          [ "$rc" -eq 0 ] || { echo "::error::cannot reach the site branch; refusing to publish without history"; exit 1; }
+          git fetch --no-tags --depth=1 origin site
+          if git cat-file -e FETCH_HEAD:v1 2>/dev/null; then
+            git archive --format=tar FETCH_HEAD v1 | tar -x -C public # symlinks or non-JSON fail validation
+          fi
+          echo "Previous v1/ tree: $(find public -type f | wc -l) files"
+
+      - name: Overlay the new shard results
+        run: |
+          if [ ! -d shards ] || [ -z "$(find shards -type f -print -quit)" ]; then
+            echo "::error::no new results from any shard; keeping the current site"; exit 1
+          fi
           # Each file path must come from exactly one shard; a collision means sharding is wrong.
           dups=$(cd shards && find . -mindepth 2 -type f -printf '%P\n' | cut -d/ -f2- | sort | uniq -d)
           if [ -n "$dups" ]; then echo "::error::files exported by more than one shard:"; echo "$dups"; exit 1; fi
+          # A shard's index.json lists only the versions it scanned: union it with the published one.
+          find shards -mindepth 2 -type f -name index.json -print0 | while IFS= read -r -d '' f; do
+            rel=${f#shards/*/}
+            if [ -f "public/$rel" ]; then
+              jq -c -s 'def vkey: [scan("[0-9]+") | tonumber][:4];
+                        .[1] + {versions: ((.[0].versions + .[1].versions) | unique | sort_by(vkey))}
+                        | .latest = .versions[-1]' "public/$rel" "$f" > "$f.merged"
+              mv "$f.merged" "$f"
+            fi
+          done
           for d in shards/*/; do cp -R "$d". public/; done
+
+      - name: Record build metadata (v1/_meta.json)
+        run: |
+          stats=$(cat "$RUNNER_TEMP"/stats/shard-*.json 2>/dev/null | jq -s -c '.')
+          shards_reported=$(jq length <<<"$stats")
+          deferred=$(jq '[.[].deferred] | add // 0' <<<"$stats")
+          complete=false
+          if [ "$SCAN_RESULT" = success ] && [ "$deferred" -eq 0 ] && [ "$shards_reported" -eq "$TOTAL" ]; then complete=true; fi
+          # engine_sha is the commit whose engine produced the published latest results; the next run
+          # rescans everything if engine/ changed since. An unfinished full rescan keeps the old value,
+          # so the next run is full again.
+          prev_sha=$(jq -r '.prev_engine_sha // empty' "$RUNNER_TEMP/plan/summary.json")
+          if [ "$MODE" = incremental ] || [ "$complete" = true ]; then engine_sha=$GITHUB_SHA; else engine_sha=$prev_sha; fi
+          mkdir -p public/v1
+          jq -n --arg engine_sha "$engine_sha" --arg build_sha "$GITHUB_SHA" --arg run_id "$GITHUB_RUN_ID" \
+                --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson complete "$complete" \
+                --argjson stats "$stats" --slurpfile plan "$RUNNER_TEMP/plan/summary.json" \
+                --argjson plugins "$(find public/v1/wordpress-plugin -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)" \
+                --argjson themes "$(find public/v1/wordpress-theme -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)" \
+                --argjson versions "$(find public/v1 -mindepth 3 -type f -name '*.json' ! -name index.json | wc -l)" '
+            {schema: 1, engine_sha: (if $engine_sha == "" then null else $engine_sha end), build_sha: $build_sha,
+             generated_at: $date, run_id: $run_id, mode: $plan[0].mode, mode_reason: $plan[0].reason,
+             complete: $complete, lists: $plan[0].lists,
+             counts: {list_entries: $plan[0].list_entries, invalid: $plan[0].invalid, unavailable: $plan[0].unavailable,
+                      unresolved_deferred: $plan[0].unresolved_deferred,
+                      skipped_unchanged: $plan[0].skipped_unchanged, planned: $plan[0].planned,
+                      scanned_ok: ([$stats[].ok] | add // 0), scan_failed: ([$stats[].failed] | add // 0),
+                      deferred: ([$stats[].deferred] | add // 0),
+                      plugins: $plugins, themes: $themes, versions: $versions}}' > public/v1/_meta.json
+          cat public/v1/_meta.json
 
       - name: Validate output
         run: |
           count=$(find public -type f -name '*.json' | wc -l)
           echo "JSON files: $count"
-          [ "$count" -gt 0 ] || { echo "::error::nothing to deploy; keeping the current site"; exit 1; }
+          [ "$count" -gt 1 ] || { echo "::error::nothing to publish; keeping the current site"; exit 1; }
           find public -type f -name '*.json' -print0 | xargs -0 -n 200 jq -e . > /dev/null
-          # Only static data goes out: no scripts or HTML from untrusted input.
-          if find public -type f ! -name '*.json' | grep -q .; then
-            echo "::error::unexpected non-JSON files in public/:"; find public -type f ! -name '*.json'; exit 1
-          fi
+          # Only static data goes in: regular .json files under v1/, no HTML, scripts or symlinks.
+          bad=$(find public ! -type d ! \( -type f -name '*.json' -path 'public/v1/*' \) -print)
+          if [ -n "$bad" ]; then echo "::error::unexpected entries in public/:"; echo "$bad"; exit 1; fi
           du -sh public
 
       - name: Generate website (HTML pages, sitemap) from the merged results
         # Runs after the JSON validation above, so only our own engine writes HTML.
         run: engine/target/release/leapcheck --db "$RUNNER_TEMP/site.sqlite" site --out public
 
-      - name: Publish to the site branch (Vercel deploys it automatically)
+      - name: Publish to the site branch (the host deploys it automatically)
         if: github.event_name == 'schedule' || inputs.deploy
         env:
           GH_TOKEN: ${{ github.token }}
@@ -275,16 +562,3 @@ jobs:
             commit -q -m "Site build ${GITHUB_RUN_ID} ($(date -u +%F))"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" site
           echo "Published $(find . -type f -not -path './.git/*' | wc -l) files to the site branch"
-
-      - name: Deploy to Vercel with CLI (optional, only if secrets are set)
-        if: github.event_name == 'schedule' || inputs.deploy
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: |
-          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
-            echo "::warning::Vercel secrets not set; skipping deploy"; exit 0
-          fi
-          npm install --global --no-fund --no-audit vercel@65
-          vercel deploy public --prod --yes --token "$VERCEL_TOKEN"
