@@ -45,7 +45,8 @@ impl Analyzer for PhpCompatibility {
                 "-q",
                 "--parallel=4",
                 // Encoded/minified files and very large generated files are skipped.
-                "--ignore=*.min.php",
+                // Test suites of bundled libraries and node_modules never run on a live site.
+                "--ignore=*.min.php,*/vendor/*/test/*,*/vendor/*/tests/*,*/vendor-prefixed/*/tests/*,*/vendor_prefixed/*/tests/*,*/node_modules/*",
             ])
             .arg(root)
             .output()

@@ -169,10 +169,12 @@ fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
     let (verdict, e, w) = main.map(|t| (t.verdict.as_str(), t.errors, t.warnings)).unwrap_or(("unknown", 0, 0));
     let date = p.scanned_at.get(..10).unwrap_or("");
     let name = &p.display;
+    let es = if e == 1 { "1 error".to_string() } else { format!("{e} errors") };
+    let ws = if w == 1 { "1 warning".to_string() } else { format!("{w} warnings") };
     let title = match verdict {
         "compatible" => format!("Is {name} compatible with PHP 8.4? Yes, v{} | LeapCheck", p.version),
-        "issues" => format!("Is {name} compatible with PHP 8.4? Runs, {w} warnings | LeapCheck"),
-        "breaks" => format!("Is {name} compatible with PHP 8.4? {e} errors found | LeapCheck"),
+        "issues" => format!("Is {name} compatible with PHP 8.4? Runs, {ws} | LeapCheck"),
+        "breaks" => format!("Is {name} compatible with PHP 8.4? {es} found | LeapCheck"),
         _ => format!("{name} PHP 8.4 compatibility: not scannable | LeapCheck"),
     };
     let plain = match verdict {
@@ -181,7 +183,7 @@ fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
         "breaks" => "errors found that can stop it working",
         _ => "could not be fully scanned",
     };
-    let desc = format!("{name} {} on PHP 8.4: {plain}. {e} errors, {w} warnings from a static scan on {date}. See files, lines and fixes, plus PHP 8.3 and 8.5.", p.version);
+    let desc = format!("{name} {} on PHP 8.4: {plain}. {es}, {ws} from a static scan on {date}. See files, lines and fixes, plus PHP 8.3 and 8.5.", p.version);
     let has_unique = main.map_or(false, |t| !t.findings.is_empty()) || !p.components.is_empty() || !p.requirements.is_empty() || p.history.len() >= 2;
     let index = verdict != "unknown" && (has_unique || p.installs.unwrap_or(0) >= 10_000);
     let canonical = format!("{base}/plugins/{}/", p.slug);
@@ -192,7 +194,7 @@ fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
     let answer = match verdict {
         "compatible" => format!("Version {} of {} showed no PHP 8.4 compatibility problems in our static scan of {date}.", esc(&p.version), esc(name)),
         "unknown" => format!("Version {} of {} contains code we could not scan (for example encoded files), so we can't give a verdict.", esc(&p.version), esc(name)),
-        _ => format!("Version {} of {} has {e} errors and {w} warnings on PHP 8.4 in our static scan of {date}.", esc(&p.version), esc(name)),
+        _ => format!("Version {} of {} has {es} and {ws} on PHP 8.4 in our static scan of {date}.", esc(&p.version), esc(name)),
     };
     let _ = write!(b, "<p class=\"lead\">{answer}</p><div class=\"card\"><div class=\"chips\">");
     for t in TARGETS {
