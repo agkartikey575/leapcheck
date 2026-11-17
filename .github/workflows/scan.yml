@@ -562,18 +562,3 @@ jobs:
             commit -q -m "Site build ${GITHUB_RUN_ID} ($(date -u +%F))"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" site
           echo "Published $(find . -type f -not -path './.git/*' | wc -l) files to the site branch"
-
-      - name: Refresh the live site (production deploys main, which serves the site branch)
-        if: github.event_name == 'schedule' || inputs.deploy
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # A one-line marker on main triggers a production redeploy that pulls the new site branch.
-          sha=$(gh api "repos/${GITHUB_REPOSITORY}/contents/.site-build?ref=main" --jq .sha 2>/dev/null || true)
-          body="site build ${GITHUB_RUN_ID} $(date -u +%FT%TZ)"
-          args=(-X PUT "repos/${GITHUB_REPOSITORY}/contents/.site-build"
-                -f message="Refresh site (${GITHUB_RUN_ID})"
-                -f content="$(printf '%s\n' "$body" | base64 -w0)" -f branch=main)
-          [ -n "$sha" ] && args+=(-f sha="$sha")
-          gh api "${args[@]}" > /dev/null
-          echo "marker updated: $body"
