@@ -4,6 +4,8 @@ name: CI
 
 on:
   push:
+    paths-ignore:
+      - ".site-build"
   pull_request:
   workflow_dispatch:
 
