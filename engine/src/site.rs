@@ -789,6 +789,10 @@ fetch("/v1/wordpress-plugin/"+s+"/index.json").then(function(x){{if(!x.ok)throw 
     write(out, "sitemap.xml", &sm)?;
     write(out, "robots.txt", &format!("User-agent: *\nAllow: /\nSitemap: {base}/sitemap.xml\n"))?;
     write(out, "vercel.json", r#"{
+  "framework": null,
+  "buildCommand": "",
+  "installCommand": "",
+  "outputDirectory": ".",
   "cleanUrls": true,
   "trailingSlash": true,
   "headers": [
