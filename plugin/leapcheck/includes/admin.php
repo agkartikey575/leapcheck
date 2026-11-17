@@ -144,7 +144,7 @@ function leapcheck_verdict_label( $verdict ) {
 		case 'issues':
 			return array( '⚠️', __( 'Issues', 'leapcheck' ) );
 		case 'breaks':
-			return array( '❌', __( 'Breaks', 'leapcheck' ) );
+			return array( '❌', __( 'Errors found', 'leapcheck' ) );
 		case 'unknown':
 			return array( '❓', __( 'Could not be scanned', 'leapcheck' ) );
 		case 'missing':
@@ -306,12 +306,12 @@ function leapcheck_render_summary( array $rows ) {
 					case 'breaks':
 						$icon = '❌';
 						/* translators: 1: PHP version, 2: number of items */
-						$text = sprintf( _n( 'Safe to upgrade to PHP %1$s? Not yet: %2$d plugin or theme in use breaks.', 'Safe to upgrade to PHP %1$s? Not yet: %2$d plugins or themes in use break.', $sum['breaks'], 'leapcheck' ), $target, $sum['breaks'] );
+						$text = sprintf( _n( 'Safe to upgrade to PHP %1$s? Check first: %2$d plugin or theme in use has errors that may stop some features.', 'Safe to upgrade to PHP %1$s? Check first: %2$d plugins or themes in use have errors that may stop some features.', $sum['breaks'], 'leapcheck' ), $target, $sum['breaks'] );
 						break;
 					case 'issues':
 						$icon = '⚠️';
 						/* translators: 1: PHP version, 2: number of items */
-						$text = sprintf( _n( 'Safe to upgrade to PHP %1$s? Probably: nothing breaks, but %2$d plugin or theme shows warnings.', 'Safe to upgrade to PHP %1$s? Probably: nothing breaks, but %2$d plugins or themes show warnings.', $sum['issues'], 'leapcheck' ), $target, $sum['issues'] );
+						$text = sprintf( _n( 'Safe to upgrade to PHP %1$s? Probably: no errors found, but %2$d plugin or theme shows warnings.', 'Safe to upgrade to PHP %1$s? Probably: no errors found, but %2$d plugins or themes show warnings.', $sum['issues'], 'leapcheck' ), $target, $sum['issues'] );
 						break;
 					case 'unchecked':
 						$icon = '❓';
@@ -409,7 +409,7 @@ function leapcheck_render_requirements_summary( array $rows ) {
 		echo esc_html(
 			sprintf(
 				/* translators: %s: comma-separated list of PHP extensions, e.g. "gd, intl" */
-				__( 'Your site\'s plugins and themes need these PHP extensions: %s. Make sure your host enables them on the new PHP version.', 'leapcheck' ),
+				__( 'Your plugins and themes use these PHP extensions (some may be optional): %s. Make sure your host offers them on the new PHP version.', 'leapcheck' ),
 				implode( ', ', $extensions )
 			)
 		);
@@ -419,7 +419,7 @@ function leapcheck_render_requirements_summary( array $rows ) {
 			<strong>
 				<?php
 				/* translators: %s: comma-separated list of PHP extensions */
-				echo esc_html( sprintf( __( 'Not enabled on this server right now: %s.', 'leapcheck' ), implode( ', ', $missing ) ) );
+				echo esc_html( sprintf( __( 'Not enabled on this server right now (usually optional features): %s.', 'leapcheck' ), implode( ', ', $missing ) ) );
 				?>
 			</strong>
 		<?php endif; ?>

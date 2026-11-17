@@ -190,7 +190,10 @@ fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
     };
     let desc = format!("{name} {} on PHP 8.4: {plain}. {es}, {ws} from a static scan on {date}. See files, lines and fixes, plus PHP 8.3 and 8.5.", p.version);
     let has_unique = main.map_or(false, |t| !t.findings.is_empty()) || !p.components.is_empty() || !p.requirements.is_empty() || p.history.len() >= 2;
-    let index = verdict != "unknown" && (has_unique || p.installs.unwrap_or(0) >= 10_000);
+    // Plugin pages stay out of search engines until the accuracy gate passes
+    // (enable with LEAPCHECK_INDEX_PLUGINS=1 at build time).
+    let gate_open = std::env::var("LEAPCHECK_INDEX_PLUGINS").map_or(false, |v| v == "1");
+    let index = gate_open && verdict != "unknown" && (has_unique || p.installs.unwrap_or(0) >= 10_000);
     let canonical = format!("{base}/plugins/{}/", p.slug);
 
     let mut b = String::new();

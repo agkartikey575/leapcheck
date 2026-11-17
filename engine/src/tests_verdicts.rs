@@ -598,3 +598,27 @@ fn new_constant_with_feature_detection_elsewhere_in_file_becomes_info() {
     detect::apply_guards(fx2.path(), &mut fs2);
     assert_eq!(fs2[0].severity, "error");
 }
+
+#[test]
+fn new_php_version_branch_is_not_a_guard() {
+    let src = "<?php\nif (PHP_VERSION_ID >= 80000) {\n\t$f = create_function('$a', 'return $a;');\n}\n";
+    let fx = Fixture::new("verdir").file("a.php", src);
+    let line = line_of(src, "create_function");
+    let mut fs = vec![finding("PHPCompatibility.FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "a.php", line)];
+    detect::apply_guards(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "error");
+    // The old-PHP branch is a guard.
+    let src2 = src.replace(">= 80000", "< 70200");
+    let fx2 = Fixture::new("verdir2").file("a.php", &src2);
+    let mut fs2 = vec![finding("PHPCompatibility.FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "a.php", line)];
+    detect::apply_guards(fx2.path(), &mut fs2);
+    assert_eq!(fs2[0].severity, "info");
+    // version_compare(..., '>=') selects new PHP: not a guard; '<' is.
+    for (op, want) in [(">=", "error"), ("<", "info"), ("lt", "info")] {
+        let s3 = format!("<?php\nif (version_compare(PHP_VERSION, '7.2', '{op}')) {{\n\t$f = create_function('$a', 'return $a;');\n}}\n");
+        let fx3 = Fixture::new(&format!("vc{op}")).file("a.php", &s3);
+        let mut fs3 = vec![finding("PHPCompatibility.FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "a.php", 3)];
+        detect::apply_guards(fx3.path(), &mut fs3);
+        assert_eq!(fs3[0].severity, want, "op {op}");
+    }
+}

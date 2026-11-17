@@ -353,10 +353,12 @@ pub fn apply_guards(root: &Path, findings: &mut [crate::model::Finding]) {
             }
             if after.is_none() && target - i <= 15 {
                 if let Some(m) = version_guard.find(line) {
-                    // A version check written as "!version_compare(...)" or "PHP_VERSION_ID <" both
-                    // select a branch; treat them as guards only when not negated with "!".
+                    // Only a check that selects OLD PHP protects old code:
+                    //   PHP_VERSION_ID < N / <= N, version_compare(PHP_VERSION, 'x', '<' | '<=' | 'lt' | 'le').
+                    // ">=" checks select NEW PHP, so code inside them must work there (never a guard).
                     let negated = line[..m.start()].trim_end().ends_with('!');
-                    if !negated {
+                    let old_branch = old_version_check(&line[m.start()..]);
+                    if old_branch != negated {
                         after = Some(m.end());
                     }
                 }
@@ -493,4 +495,16 @@ pub fn apply_suppressions(rules_dir: &Path, findings: &mut Vec<crate::model::Fin
             f.message = format!("{} ({})", f.message, why);
         }
     }
+}
+
+
+/// True when a PHP version check (starting at the match) selects older PHP versions.
+fn old_version_check(expr: &str) -> bool {
+    let lt_id = Regex::new(r"(?i)^PHP_VERSION_ID\s*<").unwrap();
+    if expr.to_lowercase().starts_with("php_version_id") {
+        return lt_id.is_match(expr);
+    }
+    // version_compare(PHP_VERSION, 'X', OP): look at the operator argument.
+    let op = Regex::new(r#"(?i)^version_compare\s*\([^,]+,[^,]+,\s*['"]\s*(<=|<|lt|le)\s*['"]"#).unwrap();
+    op.is_match(expr)
 }

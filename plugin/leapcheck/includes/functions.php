@@ -90,6 +90,9 @@ function leapcheck_is_valid_part( $value ) {
  */
 function leapcheck_make_item( $kind, $slug, $name, $version, $active, $role = '' ) {
 	$slug    = strtolower( trim( (string) $slug, LEAPCHECK_TRIM_CHARS ) );
+	if ( 'plugin' === $kind && 'hello' === $slug ) {
+		$slug = 'hello-dolly'; // Folder name differs from its WordPress.org slug.
+	}
 	$version = trim( (string) $version, LEAPCHECK_TRIM_CHARS );
 	return array(
 		'kind'      => $kind,
@@ -390,6 +393,10 @@ function leapcheck_closest_version( array $versions, $installed ) {
 	foreach ( $versions as $version ) {
 		if ( ! is_string( $version ) || $version === $installed ) {
 			continue;
+		}
+		$vparts = explode( '.', $version );
+		if ( $vparts[0] !== $parts[0] ) {
+			continue; // Never borrow a result across major versions: the code differs too much.
 		}
 		$common = 0;
 		foreach ( explode( '.', $version ) as $i => $part ) {

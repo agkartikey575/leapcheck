@@ -4,7 +4,7 @@ Tags: php, php 8, compatibility, upgrade, php version
 Requires at least: 5.8
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.2.0
+Stable tag: 0.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -77,6 +77,12 @@ LeapCheck privacy policy: https://leapcheck.vercel.app/privacy/ . The service is
 Shows needed PHP extensions, library conflicts between plugins, and closest-version results.
 
 == Changelog ==
+
+= 0.2.1 =
+* Closest-version results are only used within the same major version.
+* Clearer wording: "Errors found" instead of "Breaks", and extensions are marked as possibly optional.
+* Hello Dolly is looked up under its WordPress.org name.
+* Removed the duplicate Author URI header.
 
 = 0.2.0 =
 * New: PHP extensions needed by each plugin and theme, with a site-wide list to check with your host before upgrading.

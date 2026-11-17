@@ -144,13 +144,6 @@
     "notes": "mime_content_type() belongs to ext-fileinfo."
   },
   {
-    "extension": "json",
-    "patterns": [
-      "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?json_(?:encode|decode|last_error|last_error_msg|validate)\\s*\\("
-    ],
-    "notes": "Always enabled since PHP 8.0 (cannot be disabled). Kept for PHP 7.x targets; the engine/UI should not warn about it on PHP >= 8.0."
-  },
-  {
     "extension": "sockets",
     "patterns": [
       "(?:^\\s*|[=(,.!?;\\[{}&|+*/%<@~^]\\s*|[:>\\-]\\s+|\\b(?:return|echo|print|and|or|xor|case|else|throw|yield)\\s+)\\\\?socket_(?:create|create_pair|create_listen|connect|bind|listen|accept|read|write|send|sendto|sendmsg|recv|recvfrom|recvmsg|select|close|shutdown|set_option|get_option|setopt|getopt|set_block|set_nonblock|last_error|strerror|clear_error|getpeername|getsockname|addrinfo_[a-z_]+|import_stream|export_stream|atmark|cmsg_space)\\s*\\("
