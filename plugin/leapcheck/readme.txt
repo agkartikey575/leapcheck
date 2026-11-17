@@ -1,5 +1,5 @@
 === LeapCheck – PHP Upgrade Checker ===
-Contributors: leapcheck
+Contributors: agkartikey575
 Tags: php, php 8, compatibility, upgrade, php version
 Requires at least: 5.8
 Tested up to: 7.1
