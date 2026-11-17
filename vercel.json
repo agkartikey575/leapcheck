@@ -1,8 +1,22 @@
 {
+  "framework": null,
+  "installCommand": "",
+  "buildCommand": "rm -rf dist && git clone --quiet --depth 1 --branch site https://github.com/agkartikey575/leapcheck.git dist && rm -rf dist/.git dist/vercel.json",
+  "outputDirectory": "dist",
+  "cleanUrls": true,
+  "trailingSlash": true,
   "git": {
     "deploymentEnabled": {
-      "main": false,
       "wip": false
     }
-  }
+  },
+  "headers": [
+    {"source": "/v1/(.*)", "headers": [
+      {"key": "Cache-Control", "value": "public, max-age=3600"},
+      {"key": "Access-Control-Allow-Origin", "value": "*"},
+      {"key": "X-Content-Type-Options", "value": "nosniff"}]},
+    {"source": "/(.*)", "headers": [
+      {"key": "X-Content-Type-Options", "value": "nosniff"},
+      {"key": "Referrer-Policy", "value": "strict-origin-when-cross-origin"}]}
+  ]
 }
