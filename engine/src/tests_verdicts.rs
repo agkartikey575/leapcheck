@@ -622,3 +622,416 @@ fn new_php_version_branch_is_not_a_guard() {
         assert_eq!(fs3[0].severity, want, "op {op}");
     }
 }
+
+// ---------- accuracy fixtures (false-positive classes found in the live-results review) ----------
+//
+// Each test is one fixture: the PHP code, the findings phpcs reports for it (rule IDs and lines as
+// produced by the real analyzer), and the expected outcome after the full post-processing pipeline.
+
+const P: &str = "PHPCompatibility.";
+
+/// Full scan post-processing, exactly as `scan_root` runs it.
+fn full(root: &Path, findings: &mut Vec<Finding>) {
+    detect::post_process(root, &rules_dir(), findings);
+}
+
+fn verdict_of(fs: &[Finding]) -> String {
+    verdicts(&[("8.4".to_string(), fs.to_vec())], 0).remove(0).1
+}
+
+fn sev(fs: &[Finding]) -> Vec<(String, String)> {
+    fs.iter().map(|f| (f.rule_id.trim_start_matches(P).to_string(), f.severity.clone())).collect()
+}
+
+fn pf(rule: &str, severity: &str, file: &str, line: u32) -> Finding {
+    finding(&format!("{P}{rule}"), severity, file, line)
+}
+
+#[test]
+fn f1_extension_prefix_matches_are_dropped() {
+    let src = "<?php\nfunction f1( $post ) {\n\t$d = mysql_to_rfc3339( $post->post_date );\n\t$t = \\MeprUtils::mysql_lifetime();\n\tfamne_print_checkbox( 'x' );\n\treturn array( $d, $t );\n}\n";
+    let fx = Fixture::new("f1").file("f1.php", src);
+    let mut fs = vec![
+        pf("Extensions.RemovedExtensions.mysql_DeprecatedRemoved", "error", "f1.php", 3),
+        pf("Extensions.RemovedExtensions.mysql_DeprecatedRemoved", "error", "f1.php", 4),
+        pf("Extensions.RemovedExtensions.famRemoved", "error", "f1.php", 5),
+    ];
+    full(fx.path(), &mut fs);
+    assert!(fs.is_empty(), "{:?}", sev(&fs));
+    assert_eq!(verdict_of(&fs), "compatible");
+}
+
+#[test]
+fn f1b_real_mysql_call_still_breaks_once() {
+    let src = "<?php\nfunction f1b() {\n\treturn mysql_query( 'SELECT 1' );\n}\n";
+    let fx = Fixture::new("f1b").file("f1b.php", src);
+    let mut fs = vec![
+        pf("Extensions.RemovedExtensions.mysql_DeprecatedRemoved", "error", "f1b.php", 3),
+        pf("FunctionUse.RemovedFunctions.mysql_queryDeprecatedRemoved", "error", "f1b.php", 3),
+    ];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs.iter().filter(|f| f.severity == "error").count(), 1, "{:?}", sev(&fs));
+    assert!(fs.iter().any(|f| f.rule_id.ends_with("mysql_queryDeprecatedRemoved") && f.severity == "error"));
+    assert_eq!(verdict_of(&fs), "breaks");
+}
+
+#[test]
+fn f2_wordpress_polyfill_depends_on_required_wp_version() {
+    for (req, want_sev, want_verdict) in [("6.9", "info", "compatible"), ("6.0", "warning", "issues"), ("7.0", "info", "compatible")] {
+        let src = format!("<?php\n/**\n * Plugin Name: F2\n * Requires at least: {req}\n */\nfunction f2( array $a ) {{\n\treturn array_first( $a );\n}}\n");
+        let fx = Fixture::new("f2").file("f2.php", &src);
+        let mut fs = vec![pf("FunctionUse.NewFunctions.array_firstFound", "error", "f2.php", 7)];
+        full(fx.path(), &mut fs);
+        assert_eq!(fs[0].severity, want_sev, "requires {req}");
+        assert_eq!(verdict_of(&fs), want_verdict, "requires {req}");
+    }
+    // No header at all, but readme.txt says 6.9.
+    let fx = Fixture::new("f2r").file("f2.php", "<?php\nreturn array_first( $a );\n").file("readme.txt", "=== F2 ===\nRequires at least: 6.9\n");
+    assert_eq!(detect::wp_requires_at_least(fx.path()).as_deref(), Some("6.9"));
+    // A function WordPress does not polyfill stays an error.
+    let fx = Fixture::new("f2n").file("f2.php", "<?php\n/* Plugin Name: X\n * Requires at least: 6.9 */\nreturn mb_trim( $a );\n");
+    let mut fs = vec![pf("FunctionUse.NewFunctions.mb_trimFound", "error", "f2.php", 4)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "error");
+}
+
+#[test]
+fn f3_early_return_negated_guard_protects_rest_of_function() {
+    let src = "<?php\nclass F3 {\n\tpublic $s = -1;\n\tpublic function off() {\n\t\tif ( ! function_exists( 'get_magic_quotes_runtime' ) ) {\n\t\t\treturn 1;\n\t\t}\n\t\t$this->s = @get_magic_quotes_runtime();\n\t\treturn 1;\n\t}\n}\n";
+    let fx = Fixture::new("f3").file("f3.php", src);
+    let rule = "FunctionUse.RemovedFunctions.get_magic_quotes_runtimeDeprecatedRemoved";
+    let mut fs = vec![pf(rule, "error", "f3.php", 8)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    assert_eq!(verdict_of(&fs), "compatible");
+    // Braceless early return too.
+    let src2 = "<?php\nfunction g() {\n\tif ( ! function_exists( 'get_magic_quotes_runtime' ) ) return;\n\t$s = get_magic_quotes_runtime();\n}\n";
+    let fx2 = Fixture::new("f3b").file("f3.php", src2);
+    let mut fs2 = vec![pf(rule, "error", "f3.php", 4)];
+    full(fx2.path(), &mut fs2);
+    assert_eq!(fs2[0].severity, "info");
+}
+
+#[test]
+fn early_exit_guard_limits() {
+    let rule = "FunctionUse.RemovedFunctions.get_magic_quotes_runtimeDeprecatedRemoved";
+    // die()/throw is not an early return: the code fails on new PHP.
+    let die = "<?php\nfunction g() {\n\tif ( ! function_exists( 'get_magic_quotes_runtime' ) ) {\n\t\tdie( 'old PHP needed' );\n\t}\n\t$s = get_magic_quotes_runtime();\n}\n";
+    // The early return sits in a different function that has closed.
+    let other_fn = "<?php\nfunction a() {\n\tif ( ! function_exists( 'get_magic_quotes_runtime' ) ) {\n\t\treturn;\n\t}\n}\nfunction b() {\n\t$s = get_magic_quotes_runtime();\n}\n";
+    // A block that does more than return does not end the function.
+    let not_only_return = "<?php\nfunction g() {\n\tif ( ! function_exists( 'get_magic_quotes_runtime' ) ) {\n\t\t$x = 1;\n\t}\n\t$s = get_magic_quotes_runtime();\n}\n";
+    for (name, src) in [("die", die), ("otherfn", other_fn), ("notonly", not_only_return)] {
+        let fx = Fixture::new(name).file("g.php", src);
+        let line = line_of(src, "$s = get_magic");
+        let mut fs = vec![pf(rule, "error", "g.php", line)];
+        full(fx.path(), &mut fs);
+        assert_eq!(fs[0].severity, "error", "{name}");
+    }
+}
+
+#[test]
+fn f4_short_circuit_negated_guard_on_one_line() {
+    let src = "<?php\nfunction f4( $v ) {\n\treturn ( ! function_exists( 'get_magic_quotes_gpc' ) || ! get_magic_quotes_gpc() ) ? addslashes( $v ) : $v;\n}\n";
+    let fx = Fixture::new("f4").file("f4.php", src);
+    let mut fs = vec![pf("FunctionUse.RemovedFunctions.get_magic_quotes_gpcDeprecatedRemoved", "error", "f4.php", 3)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    // `&&` after a negated check is not a guard: the call runs exactly when the function is missing.
+    let src2 = "<?php\nif ( ! function_exists( 'get_magic_quotes_gpc' ) && get_magic_quotes_gpc() ) { $a = 1; }\n";
+    let fx2 = Fixture::new("f4b").file("f4.php", src2);
+    let mut fs2 = vec![pf("FunctionUse.RemovedFunctions.get_magic_quotes_gpcDeprecatedRemoved", "error", "f4.php", 2)];
+    full(fx2.path(), &mut fs2);
+    assert_eq!(fs2[0].severity, "error");
+}
+
+#[test]
+fn f5_else_branch_of_new_php_check_is_guarded() {
+    let src = "<?php\nfunction f5( array $q ) {\n\tif ( version_compare( PHP_VERSION, '7.4', '>=' ) ) {\n\t\t$u = implode( '&', $q );\n\t} else {\n\t\t$u = implode( $q, '&' );\n\t}\n\treturn $u;\n}\n";
+    let fx = Fixture::new("f5").file("f5.php", src);
+    let mut fs = vec![pf("ParameterValues.RemovedImplodeFlexibleParamOrder.Removed", "error", "f5.php", 6)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    // After the whole if/else the code runs on every version again.
+    let after = src.replace("\treturn $u;", "\t$z = implode( $q, '&' );\n\treturn $u;");
+    let fx2 = Fixture::new("f5after").file("f5.php", &after);
+    let mut fs2 = vec![pf("ParameterValues.RemovedImplodeFlexibleParamOrder.Removed", "error", "f5.php", line_of(&after, "$z = implode"))];
+    full(fx2.path(), &mut fs2);
+    assert_eq!(fs2[0].severity, "error");
+}
+
+#[test]
+fn f5_far_version_check_window_covers_long_blocks() {
+    // flexible-shipping shape: the check is about 30 lines above, in both branches.
+    let body: String = (0..28).map(|i| format!("\t\t$x{i} = 1;\n")).collect();
+    let src = format!(
+        "<?php\nfunction f5c( array $q ) {{\n\tif ( PHP_VERSION_ID > 50300 ) {{\n{body}\t\t$u = implode( '&', $q );\n\t}} else {{\n{body}\t\t$f = create_function( '', 'return 1;' );\n\t}}\n\treturn $u;\n}}\n"
+    );
+    let fx = Fixture::new("f5c").file("f5.php", &src);
+    let mut fs = vec![pf("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "f5.php", line_of(&src, "create_function"))];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    // Old-PHP branch opened 40 lines above, finding still inside it.
+    let long: String = (0..40).map(|i| format!("\t$x{i} = 1;\n")).collect();
+    let src2 = format!("<?php\nif ( PHP_VERSION_ID < 70000 ) {{\n{long}\t$f = create_function( '', 'return 1;' );\n}}\n");
+    let fx2 = Fixture::new("f5d").file("f5.php", &src2);
+    let mut fs2 = vec![pf("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "f5.php", line_of(&src2, "create_function"))];
+    full(fx2.path(), &mut fs2);
+    assert_eq!(fs2[0].severity, "info");
+}
+
+#[test]
+fn f5b_removed_feature_in_new_php_branch_stays_error() {
+    let src = "<?php\nfunction f5b() {\n\tif ( PHP_VERSION_ID >= 80000 ) {\n\t\t$f = create_function( '', 'return 1;' );\n\t\treturn $f();\n\t}\n\treturn 0;\n}\n";
+    let fx = Fixture::new("f5b").file("f5b.php", src);
+    let mut fs = vec![pf("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "f5b.php", 4)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "error");
+    assert_eq!(verdict_of(&fs), "breaks");
+    // Old-side checks whose range still includes a checked target are not guards either.
+    for cond in ["PHP_VERSION_ID < 90000", "version_compare( PHP_VERSION, '8.5', '<' )", "PHP_MAJOR_VERSION >= 8", "PHP_MAJOR_VERSION == 8"] {
+        let s = src.replace("PHP_VERSION_ID >= 80000", cond);
+        let fx = Fixture::new("f5bx").file("f5b.php", &s);
+        let mut fs = vec![pf("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "f5b.php", 4)];
+        full(fx.path(), &mut fs);
+        assert_eq!(fs[0].severity, "error", "{cond}");
+    }
+    // Old-PHP checks in the other spellings are guards.
+    for cond in ["PHP_MAJOR_VERSION < 8", "LIBXML_VERSION < 20900", "version_compare( PHP_VERSION, '7.0' ) < 0", "! ( PHP_VERSION_ID >= 70000 )"] {
+        let s = src.replace("PHP_VERSION_ID >= 80000", cond);
+        let fx = Fixture::new("f5by").file("f5b.php", &s);
+        let mut fs = vec![pf("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "f5b.php", 4)];
+        full(fx.path(), &mut fs);
+        assert_eq!(fs[0].severity, "info", "{cond}");
+    }
+}
+
+#[test]
+fn f6_prefixed_defined_guard() {
+    let src = "<?php\nnamespace Acme\\Vendor;\nfunction f6( $func, $m, $s, $k ) {\n\tswitch ( true ) {\n\t\tcase \\defined( 'Acme\\\\Vendor\\\\OPENSSL_PKCS1_PSS_PADDING' ):\n\t\t\treturn $func( $m, $s, $k, 'sha256', OPENSSL_PKCS1_PSS_PADDING );\n\t}\n\treturn false;\n}\n";
+    let fx = Fixture::new("f6").file("f6.php", src);
+    let mut fs = vec![pf("Constants.NewConstants.openssl_pkcs1_pss_paddingFound", "error", "f6.php", 6)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    assert_eq!(verdict_of(&fs), "compatible");
+}
+
+#[test]
+fn f7_break_in_braceless_loop_body_is_dropped() {
+    let src = "<?php\nfunction f7( array $args ) {\n\t$index = null;\n\tfor ( $i = 0; $i < count( $args ) - 1; $i++ ) if ( $args[ $i ] === 'plugin' ) { $index = $i; break; }\n\treturn $index;\n}\n";
+    let fx = Fixture::new("f7").file("f7.php", src);
+    let mut fs = vec![pf("ControlStructures.ForbiddenBreakContinueOutsideLoop.FatalError", "error", "f7.php", 4)];
+    full(fx.path(), &mut fs);
+    assert!(fs.is_empty());
+    // A real break outside any loop stays.
+    let fx2 = Fixture::new("f7b").file("f7.php", "<?php\nif ( $a ) {\n\tbreak;\n}\n");
+    let mut fs2 = vec![pf("ControlStructures.ForbiddenBreakContinueOutsideLoop.FatalError", "error", "f7.php", 3)];
+    full(fx2.path(), &mut fs2);
+    assert_eq!(fs2.len(), 1);
+}
+
+#[test]
+fn f8_namespaced_each_function_is_not_php_each() {
+    let src = "<?php\nnamespace Acme\\Promise;\nfunction each( $iterable, callable $cb ) {\n\tforeach ( $iterable as $k => $v ) {\n\t\t$cb( $v, $k );\n\t}\n}\nfunction all( $promises ) {\n\t$r = array();\n\treturn each( $promises, function ( $v, $k ) use ( &$r ) { $r[ $k ] = $v; } );\n}\n";
+    let fx = Fixture::new("f8").file("f8.php", src);
+    let mut fs = vec![finding(EACH, "error", "f8.php", 10)];
+    full(fx.path(), &mut fs);
+    assert!(fs.is_empty());
+    // Declared in another file of the same namespace (Guzzle's functions.php) also counts.
+    let fx2 = Fixture::new("f8b")
+        .file("functions.php", "<?php\nnamespace Acme\\Promise;\nfunction each( $i ) { return $i; }\n")
+        .file("Each.php", "<?php\nnamespace Acme\\Promise;\nclass Each {\n\tfunction of( $p ) {\n\t\treturn each( $p );\n\t}\n}\n");
+    let mut fs2 = vec![finding(EACH, "error", "Each.php", 5)];
+    full(fx2.path(), &mut fs2);
+    assert!(fs2.is_empty());
+    // A namespaced file without its own each() still calls PHP's each().
+    let fx3 = Fixture::new("f8c").file("x.php", "<?php\nnamespace Other;\nwhile ( list( $k, $v ) = each( $a ) ) {}\n");
+    let mut fs3 = vec![finding(EACH, "error", "x.php", 3)];
+    full(fx3.path(), &mut fs3);
+    assert_eq!(fs3[0].severity, "error");
+}
+
+#[test]
+fn f9_rules_that_do_not_break_on_upgrade() {
+    let src = "<?php\nclass F9 {\n\tprivate static $c = array();\n\tpublic static function run( $k ) {\n\t\tini_set( 'magic_quotes_sybase', 0 );\n\t\t$h = strip_tags( '<b>x</b>', '<br/><b>' );\n\t\tif ( ! isset( $HTTP_RAW_POST_DATA ) ) {\n\t\t\t$HTTP_RAW_POST_DATA = file_get_contents( 'php://input' );\n\t\t}\n\t\treturn self::$c[ $k ]();\n\t}\n}\n";
+    let fx = Fixture::new("f9").file("f9.php", src);
+    let mut fs = vec![
+        pf("IniDirectives.RemovedIniDirectives.magic_quotes_sybaseDeprecatedRemoved", "error", "f9.php", 5),
+        pf("ParameterValues.ForbiddenStripTagsSelfClosingXHTML.Found", "error", "f9.php", 6),
+        pf("Variables.RemovedPredefinedGlobalVariables.http_raw_post_dataDeprecatedRemoved", "error", "f9.php", 7),
+        pf("Variables.RemovedPredefinedGlobalVariables.http_raw_post_dataDeprecatedRemoved", "error", "f9.php", 8),
+        pf("Variables.NewUniformVariableSyntax.Found", "error", "f9.php", 10),
+        pf("Variables.ForbiddenThisUseContexts.OutsideObjectContext", "error", "f9.php", 10),
+        pf("ParameterValues.ChangedIntToBoolParamType.ob_implicit_flush_enableNumericFound", "error", "f9.php", 5),
+    ];
+    full(fx.path(), &mut fs);
+    let got = sev(&fs);
+    assert!(fs.iter().all(|f| f.severity != "error"), "{got:?}");
+    let s = |r: &str| fs.iter().find(|f| f.rule_id.contains(r)).unwrap().severity.as_str();
+    assert_eq!(s("RemovedIniDirectives"), "warning");
+    assert_eq!(s("RemovedPredefinedGlobalVariables"), "warning");
+    assert_eq!(s("ForbiddenStripTags"), "info");
+    assert_eq!(s("NewUniformVariableSyntax"), "info");
+    assert_eq!(s("ChangedIntToBool"), "info");
+    let this = fs.iter().find(|f| f.rule_id.contains("OutsideObjectContext")).unwrap();
+    assert_eq!(this.severity, "info");
+    assert!(this.message.contains("existing bug, not caused by the upgrade"), "{}", this.message);
+    assert_eq!(verdict_of(&fs), "issues");
+}
+
+#[test]
+fn f10_internal_notes_and_warning_noise() {
+    let report = serde_json::json!({"totals": {}, "files": {
+        "/r/index.php": {"messages": [{"source": "Internal.NoCodeFound", "type": "WARNING", "line": 1, "message": "No PHP code"}]},
+        "/r/view.php": {"messages": [
+            {"source": "Internal.LineEndings.Mixed", "type": "WARNING", "line": 1, "message": "mixed"},
+            {"source": "PHPCompatibility.FunctionUse.RemovedFunctions.eachDeprecatedRemoved", "type": "ERROR", "line": 3, "message": "each"}
+        ]}
+    }});
+    let fs = crate::php::parse_report(&report, Path::new("/r"), "php:phpcompatibility");
+    let got: Vec<(&str, &str, &str)> = fs.iter().map(|f| (f.rule_id.as_str(), f.file.as_str(), f.severity.as_str())).collect();
+    assert_eq!(got, vec![(EACH, "view.php", "error")]);
+    // Non-deprecations that only produce warnings become info.
+    let fx = Fixture::new("f10").file("a.php", "<?php\nclass A implements Serializable { function __x() {} function __serialize(): array { return []; } }\n");
+    let mut fs = vec![
+        pf("FunctionNameRestrictions.ReservedFunctionNames.MethodDoubleUnderscore", "warning", "a.php", 2),
+        pf("Interfaces.RemovedSerializable.RedundantSerializableImplementation", "warning", "a.php", 2),
+        pf("FunctionDeclarations.NewClosure.ThisFoundOutsideClass", "warning", "a.php", 2),
+        pf("FunctionUse.ArgumentFunctionsReportCurrentValue.NeedsInspection", "warning", "a.php", 2),
+        pf("Variables.ForbiddenGlobalVariableVariable.NonBareVariableFound", "warning", "a.php", 2),
+    ];
+    full(fx.path(), &mut fs);
+    assert!(fs.iter().all(|f| f.severity == "info"), "{:?}", sev(&fs));
+    assert_eq!(verdict_of(&fs), "compatible");
+}
+
+#[test]
+fn f11_code_that_never_runs_is_not_scanned() {
+    use crate::php::non_runtime_reason as nr;
+    let php = b"<?php";
+    for p in [
+        "lib/x/test/HexTest.php",
+        "lib/maennchen/zipstream-php/test/ZipTest.php",
+        "php-toolkit/rowbot/url/tests/HostParserTest.php",
+        "vendor/acme/lib/Tests/A.php",
+        "vendor/tubalmartin/cssmin/gui/index.php",
+        "vendor/acme/lib/examples/demo.php",
+        "vendor/phplrt/compiler/resources/templates/parser.tpl.php",
+        "assets/x.min.php",
+        "node_modules/a/b.php",
+    ] {
+        assert!(nr(p, php).is_some(), "{p}");
+    }
+    assert_eq!(nr("vendor/swiftmailer/lib/swiftmailer_generate_mimes_config.php", b"#!/usr/bin/php\n<?php"), Some("command-line script"));
+    for p in ["includes/class-test-mode.php", "includes/tests.php", "admin/gui/index.php", "templates/view.tpl.php", "vendor/acme/lib/src/Testing.php", "inc/latest/x.php"] {
+        assert_eq!(nr(p, php), None, "{p}");
+    }
+    let fx = Fixture::new("f11")
+        .file("lib/x/test/HexTest.php", "<?php\nclass HexTest {}\n")
+        .file("bin/tool.php", "#!/usr/bin/env php\n<?php\n")
+        .file("main.php", "<?php\n")
+        .file("inc/a.inc", "<?php\n")
+        .file("readme.txt", "x");
+    let files: Vec<String> = crate::php::runtime_files(fx.path()).iter().map(|p| p.strip_prefix(fx.path()).unwrap().to_string_lossy().into_owned()).collect();
+    assert_eq!(files, vec!["inc/a.inc", "main.php"]);
+}
+
+#[test]
+fn guards_now_apply_to_warnings() {
+    let src = "<?php\nif ( PHP_VERSION_ID < 80000 ) {\n\tlibxml_disable_entity_loader( true );\n}\n";
+    let fx = Fixture::new("warnguard").file("x.php", src);
+    let mut fs = vec![pf("FunctionUse.RemovedFunctions.libxml_disable_entity_loaderDeprecated", "warning", "x.php", 3)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+}
+
+#[test]
+fn duplicate_findings_are_reported_once() {
+    let fx = Fixture::new("dup").file("a.php", "<?php\n$x = 1;\n");
+    let mut fs = vec![finding(CREATE_FUNCTION, "error", "a.php", 2), finding(CREATE_FUNCTION, "error", "a.php", 2), finding(CREATE_FUNCTION, "error", "a.php", 3)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs.len(), 2);
+}
+
+#[test]
+fn components_are_deduplicated() {
+    let c = |name: &str, v: Option<&str>, path: &str, det: &str, kind: &str| {
+        let mut x = comp(name, v, path);
+        x.detection = det.into();
+        x.kind = kind.into();
+        x
+    };
+    let comps = vec![
+        c("guzzle", Some("7"), "vendor/guzzlehttp/guzzle/src", "signature", "php"),
+        c("guzzlehttp/guzzle", Some("7.10.3"), "vendor/guzzlehttp/guzzle", "composer-installed", "php"),
+        c("monolog", Some("2"), "vendor/monolog/monolog/src/Monolog", "signature", "php"),
+        c("monolog/monolog", Some("2.11.1"), "vendor/monolog/monolog", "composer-installed", "php"),
+        c("phpseclib", None, "vendor/phpseclib/phpseclib/phpseclib", "signature", "php"),
+        c("phpseclib/phpseclib", Some("3.0.57"), "vendor/phpseclib/phpseclib", "composer-installed", "php"),
+        // A different copy elsewhere in the plugin with another version is kept.
+        c("phpmailer", Some("5.2.7"), "lib/PHPMailer", "signature", "php"),
+        c("phpmailer", Some("6.9.1"), "vendor/phpmailer/phpmailer/src", "signature", "php"),
+        // The same JS library once per file: keep the shortest path.
+        c("bootstrap", Some("4.6.0"), "assets/js/vendor/bootstrap.bundle.min.js", "retirejs", "js"),
+        c("bootstrap", Some("4.6.0"), "assets/js/bootstrap.min.js", "retirejs", "js"),
+        c("bootstrap", Some("4.6.0"), "admin/assets/js/bootstrap.bundle.js", "retirejs", "js"),
+    ];
+    let got: Vec<String> = detect::dedupe_components(comps).iter().map(|c| format!("{} {} {}", c.name, c.version.as_deref().unwrap_or("-"), c.path)).collect();
+    assert_eq!(
+        got,
+        vec![
+            "bootstrap 4.6.0 assets/js/bootstrap.min.js",
+            "guzzlehttp/guzzle 7.10.3 vendor/guzzlehttp/guzzle",
+            "monolog/monolog 2.11.1 vendor/monolog/monolog",
+            "phpmailer 5.2.7 lib/PHPMailer",
+            "phpmailer 6.9.1 vendor/phpmailer/phpmailer/src",
+            "phpseclib/phpseclib 3.0.57 vendor/phpseclib/phpseclib",
+        ]
+    );
+}
+
+#[test]
+fn suppression_info_action_and_prefix_rules() {
+    let fx = Fixture::new("suppinfo").file(
+        "suppressions.json",
+        r#"[{"rule_id":"R.ini.*","path_regex":".*","action":"info","reason":"no-op"},{"rule_id":"R.exact","path_regex":".*","action":"info","reason":"x"}]"#,
+    );
+    let mut fs = vec![finding("R.ini.a", "error", "a.php", 1), finding("R.ini.b", "warning", "a.php", 2), finding("R.exact.more", "error", "a.php", 3), finding("R.ini.c", "info", "a.php", 4)];
+    detect::apply_suppressions(fx.path(), &mut fs);
+    let got: Vec<&str> = fs.iter().map(|f| f.severity.as_str()).collect();
+    assert_eq!(got, vec!["info", "info", "error", "info"]);
+    assert_eq!(fs[0].message, "test message (no-op)");
+    assert_eq!(fs[3].message, "test message", "already-info findings are unchanged");
+}
+
+#[test]
+fn file_selected_by_old_php_version_check_becomes_info() {
+    let loader = "<?php\nrequire_once plugin_dir_path( __FILE__ ) . ( version_compare( PHP_VERSION, '5.3', '<' ) ? 'includes/sc-php52.php' : 'includes/sc.php' );\n";
+    let fx = Fixture::new("d5").file("main.php", loader).file("includes/sc-php52.php", "<?php\n$f = create_function( '', 'return 1;' );\n").file("includes/sc.php", "<?php\n$f = static function () {};\n");
+    let mut fs = vec![finding(CREATE_FUNCTION, "error", "includes/sc-php52.php", 2), finding(CREATE_FUNCTION, "error", "includes/sc.php", 2)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    assert_eq!(fs[1].severity, "error", "the new-PHP side is loaded on new PHP");
+    // Selected on the new-PHP side, or also included unconditionally elsewhere: stays an error.
+    for extra in ["<?php\nrequire 'includes/sc-php52.php';\n", "<?php\nrequire PHP_VERSION_ID >= 80000 ? 'includes/sc-php52.php' : 'x.php';\n"] {
+        let fx = Fixture::new("d5b").file("main.php", loader).file("other.php", extra).file("includes/sc-php52.php", "<?php\n$f = create_function( '', 'return 1;' );\n");
+        let mut fs = vec![finding(CREATE_FUNCTION, "error", "includes/sc-php52.php", 2)];
+        full(fx.path(), &mut fs);
+        assert_eq!(fs[0].severity, "error", "{extra}");
+    }
+    // A file nobody includes by name keeps its findings.
+    let fx = Fixture::new("d5c").file("a.php", "<?php\n$f = create_function( '', 'return 1;' );\n");
+    let mut fs = vec![finding(CREATE_FUNCTION, "error", "a.php", 2)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "error");
+}
+
+#[test]
+fn feature_checks_do_not_guard_deprecation_warnings() {
+    // The deprecated constant still exists on PHP 8.4, so this code runs and is still deprecated.
+    let src = "<?php\nif ( defined( 'MYSQLI_STORE_RESULT_COPY_DATA' ) ) {\n\treturn mysqli_store_result( $l, MYSQLI_STORE_RESULT_COPY_DATA );\n}\n";
+    let fx = Fixture::new("depwarn").file("a.php", src);
+    let mut fs = vec![pf("Constants.RemovedConstants.mysqli_store_result_copy_dataDeprecated", "warning", "a.php", 3)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "warning");
+}

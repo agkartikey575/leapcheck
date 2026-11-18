@@ -1,0 +1,12 @@
+[
+  {"function": "str_contains", "wp_since": "5.9", "php_since": "8.0"},
+  {"function": "str_starts_with", "wp_since": "5.9", "php_since": "8.0"},
+  {"function": "str_ends_with", "wp_since": "5.9", "php_since": "8.0"},
+  {"function": "array_is_list", "wp_since": "6.5", "php_since": "8.1"},
+  {"function": "array_find", "wp_since": "6.8", "php_since": "8.4"},
+  {"function": "array_find_key", "wp_since": "6.8", "php_since": "8.4"},
+  {"function": "array_any", "wp_since": "6.8", "php_since": "8.4"},
+  {"function": "array_all", "wp_since": "6.8", "php_since": "8.4"},
+  {"function": "array_first", "wp_since": "6.9", "php_since": "8.5"},
+  {"function": "array_last", "wp_since": "6.9", "php_since": "8.5"}
+]

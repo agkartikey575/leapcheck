@@ -6,9 +6,11 @@ version, so bump it when a rule changes and re-scan the affected packages.
 
 | File | What it does | Owner | Source |
 |---|---|---|---|
-| `php-signatures.json` | Finds PHP libraries copied into plugins/themes, and their versions | compatibility-expert | our own, checked against real plugins |
-| `php-extensions.json` | Finds PHP extensions the code calls directly (gd, intl, ...) | compatibility-expert | our own, checked against real plugins |
+| `php-signatures.json` | Finds PHP libraries copied into plugins/themes, and their versions | LeapCheck | our own, checked against real plugins |
+| `php-extensions.json` | Finds PHP extensions the code calls directly (gd, intl, ...) | LeapCheck | our own, checked against real plugins |
 | `retire-jsrepository.json` | Finds JS libraries (often minified) and known vulnerabilities | upstream RetireJS | Apache-2.0 open data (see below) |
+| `suppressions.json` | Known false positives and rules that do not break on an upgrade (remove, or lower to warning / info) | LeapCheck | our own, checked against real plugins |
+| `wp-polyfills.json` | New PHP functions WordPress core defines itself on older PHP (`wp-includes/compat.php`) | LeapCheck | WordPress core source (GPL), function names and versions only |
 
 Current contents (v1, 2026-11-04): **35 PHP signatures, 26 extensions, 76 RetireJS library entries (798 vulnerability records)**.
 
@@ -119,6 +121,33 @@ If the URL returns 404, check the RetireJS repository for where `jsrepository.js
 (the CLI downloads it from the same repository) and update this README.
 
 ---
+
+## 4. `suppressions.json`
+
+```json
+[{"rule_id": "PHPCompatibility.IniDirectives.RemovedIniDirectives.*", "path_regex": ".*", "action": "warning", "reason": "..."}]
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `rule_id` | yes | Exact analyzer rule ID, or a prefix ending in `*`. |
+| `path_regex` | yes | Rust regex on the file path relative to the package root. |
+| `action` | no | `remove` (default): known false positive, dropped. `warning`: errors become warnings (real change, code still runs). `info`: errors and warnings become info (not a change caused by the upgrade; shown, never counted in the verdict). |
+| `reason` | yes in practice | Appended to the finding message in brackets. Written for site visitors. |
+
+The first entry that matches a finding decides, so put narrow entries before broad ones.
+
+## 5. `wp-polyfills.json`
+
+```json
+[{"function": "array_first", "wp_since": "6.9", "php_since": "8.5"}]
+```
+
+`function` and `wp_since` are read by the engine; `php_since` is documentation. A `NewFunctions` finding
+for a listed function becomes `info` when the package's `Requires at least:` (plugin header, theme
+`style.css`, or readme) is at least `wp_since`, otherwise `warning` ("needs WordPress X+ on this PHP").
+Source: `wp-includes/compat.php` in WordPress core (array_first/array_last: changeset 60672, ticket #63853).
+Only versions already released are listed.
 
 ## Verification method (how every rule was checked)
 

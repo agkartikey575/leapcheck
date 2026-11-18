@@ -275,7 +275,7 @@ fn scan_root(cli: &Cli, conn: &Connection, run: &trace::Run, eco: &str, name: &s
     let analyzer = run.step("locate_analyzer", || php::PhpCompatibility::locate(&cli.php_tools))?;
     run.set_meta(None, Some(&format!("{} | {}", analyzer.id(), analyzer.version())))?;
 
-    let components = run.step("detect_components", || Ok(detect::components(root, &rules)))?;
+    let components = run.step("detect_components", || Ok(detect::dedupe_components(detect::components(root, &rules))))?;
     let requirements = run.step("detect_requirements", || Ok(detect::requirements(root, &rules)))?;
     let encoded = count_encoded(root);
     if encoded > 0 {
@@ -288,9 +288,7 @@ fn scan_root(cli: &Cli, conn: &Connection, run: &trace::Run, eco: &str, name: &s
         for f in findings.iter_mut() {
             f.component = detect::attribute(&f.file, &components);
         }
-        detect::apply_suppressions(&cli.rules, &mut findings);
-        detect::apply_guards(root, &mut findings);
-        detect::apply_fallbacks(root, &mut findings);
+        detect::post_process(root, &cli.rules, &mut findings);
         per_target.push((t.clone(), findings));
     }
     run.step("store", || store(conn, &run.id, eco, name, version, &components, &requirements, &per_target, encoded))?;

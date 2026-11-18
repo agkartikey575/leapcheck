@@ -9,5 +9,89 @@
     "path_regex": ".*",
     "action": "warning",
     "reason": "behaviour change since PHP 7.0: the code still runs, but func_get_args() and similar may report a changed value"
+  },
+  {
+    "rule_id": "PHPCompatibility.FunctionUse.ArgumentFunctionsReportCurrentValue.NeedsInspection",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "PHP 7.0 behaviour: code that runs on PHP 7 or 8 today already gets this behaviour, so the upgrade changes nothing"
+  },
+  {
+    "rule_id": "PHPCompatibility.IniDirectives.RemovedIniDirectives.*",
+    "path_regex": ".*",
+    "action": "warning",
+    "reason": "ini_set()/ini_get() of a removed directive returns false without an error, so the code keeps running"
+  },
+  {
+    "rule_id": "PHPCompatibility.Variables.RemovedPredefinedGlobalVariables.*",
+    "path_regex": ".*",
+    "action": "warning",
+    "reason": "the variable is simply undefined on newer PHP (a notice, not a fatal error); some code sets it itself"
+  },
+  {
+    "rule_id": "PHPCompatibility.Variables.NewUniformVariableSyntax.Found",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "PHP 7.0 meaning change: code that runs on PHP 7 or 8 today already has the new meaning, so the upgrade changes nothing"
+  },
+  {
+    "rule_id": "PHPCompatibility.Variables.ForbiddenGlobalVariableVariable.NonBareVariableFound",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "PHP 7.0 change: code that runs on PHP 7 or 8 today already has this behaviour"
+  },
+  {
+    "rule_id": "PHPCompatibility.Variables.ForbiddenThisUseContexts.OutsideObjectContext",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "existing bug, not caused by the upgrade: $this outside an object fails on every PHP version"
+  },
+  {
+    "rule_id": "PHPCompatibility.ParameterValues.ForbiddenStripTagsSelfClosingXHTML.Found",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "self-closing tags in strip_tags() allowed tags are ignored since PHP 5.3.4, without an error"
+  },
+  {
+    "rule_id": "PHPCompatibility.ParameterValues.ChangedIntToBoolParamType.*",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "an integer passed to a bool parameter is converted without an error unless the file uses strict_types"
+  },
+  {
+    "rule_id": "PHPCompatibility.FunctionDeclarations.RemovedCallingDestructAfterConstructorExit.*",
+    "path_regex": ".*",
+    "action": "warning",
+    "reason": "behaviour change in PHP 8.0: the destructor no longer runs after exit() in a constructor; the code still runs"
+  },
+  {
+    "rule_id": "PHPCompatibility.FunctionNameRestrictions.ReservedFunctionNames.MethodDoubleUnderscore",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "method names starting with __ are only discouraged; nothing changes on newer PHP"
+  },
+  {
+    "rule_id": "PHPCompatibility.Interfaces.RemovedSerializable.RedundantSerializableImplementation",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "the class also has __serialize()/__unserialize(), so PHP does not emit the Serializable deprecation"
+  },
+  {
+    "rule_id": "PHPCompatibility.FunctionDeclarations.NewClosure.ThisFoundOutsideClass",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "a \"please verify\" note, not a change: templates using $this are usually included from inside a class method"
+  },
+  {
+    "rule_id": "PHPCompatibility.Classes.NewLateStaticBinding.OutsideClassScope",
+    "path_regex": "(?i)\\.tpl\\.php$",
+    "action": "info",
+    "reason": "code-generator template included from a class method, where static:: is valid"
+  },
+  {
+    "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved",
+    "path_regex": "(?i)(^|/)phpseclib/(.*/)?Crypt/Base\\.php$",
+    "action": "info",
+    "reason": "phpseclib only uses create_function() when use_inline_crypt is set, which it sets only after function_exists('create_function')"
   }
 ]
