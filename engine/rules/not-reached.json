@@ -1,0 +1,58 @@
+[
+  {
+    "slug": "backuply",
+    "version": "1.6.0",
+    "file": "lib/ftp.php",
+    "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.eachDeprecatedRemoved",
+    "reason": "each() is only in the bundled FTP class's glob() method, which nothing in the plugin calls",
+    "reviewed_by_date": "2026-11-19"
+  },
+  {
+    "slug": "matomo",
+    "version": "5.13.1",
+    "file": "app/libs/HTML/QuickForm2/Renderer/Default.php",
+    "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.eachDeprecatedRemoved",
+    "reason": "each() is only in the bundled QuickForm2 renderer's group-template branches (elementTemplatesForGroup*), which Matomo never fills",
+    "reviewed_by_date": "2026-11-19"
+  },
+  {
+    "slug": "matomo",
+    "version": "5.13.1",
+    "file": "app/vendor/lox/xhprof/xhprof_lib/utils/xhprof_runs.php",
+    "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved",
+    "reason": "create_function() is only in the bundled XHProf list_runs() method, which nothing calls",
+    "reviewed_by_date": "2026-11-19"
+  },
+  {
+    "slug": "wp-db-backup",
+    "version": "2.5.3",
+    "file": "wp-db-backup.php",
+    "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.eachDeprecatedRemoved",
+    "reason": "each() is only in the is_array() branch of backquote(), and all 11 callers pass a string",
+    "reviewed_by_date": "2026-11-19"
+  },
+  {
+    "slug": "wptouch",
+    "version": "4.3.62",
+    "file": "core/admin-extensions.php",
+    "rule_id": "PHPCompatibility.ParameterValues.RemovedImplodeFlexibleParamOrder.Removed",
+    "reason": "the reversed implode() is only in wptouch_the_addon_features(), which nothing calls",
+    "reviewed_by_date": "2026-11-19"
+  },
+  {
+    "slug": "wptouch",
+    "version": "4.3.62",
+    "file": "core/admin-themes.php",
+    "rule_id": "PHPCompatibility.ParameterValues.RemovedImplodeFlexibleParamOrder.Removed",
+    "reason": "the reversed implode() is only in wptouch_the_theme_features(), which nothing calls",
+    "reviewed_by_date": "2026-11-19"
+  },
+  {
+    "slug": "contact-form-plugin",
+    "version": "4.4.1",
+    "file": "contact_form.php",
+    "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.eachDeprecatedRemoved",
+    "reason": "each() is only in the is_array() branch of cntctfrm_clean_input(), and its only caller passes the User-Agent string",
+    "reviewed_by_date": "2026-11-19"
+  }
+]

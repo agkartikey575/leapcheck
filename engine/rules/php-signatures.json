@@ -367,5 +367,47 @@
       "iwp-client@1.13.10 (lib/amazon_s3_bwd_comp/sdk.class.php, 1.5.14)",
       "w3-total-cache@2.11.0 (lib/SNS/sdk.class.php)"
     ]
+  },
+  {
+    "name": "pemftp",
+    "match_file_regex": "(^|/)(class-)?ftp\\.php$",
+    "content_regex": "\\bclass\\s+ftp_base\\b",
+    "version_regex": "(\\b\\B)",
+    "notes": "PemFTP (Alexey Dotsenko's FTP class: ftp_base plus ftp/ftp_pure/ftp_sockets), also shipped in WordPress core as wp-admin/includes/class-ftp.php. Presence-only: copies carry no version. The generic file name is why content_regex requires the ftp_base class.",
+    "verified_in": [
+      "backuply@1.6.0 (lib/ftp.php, class ftp_base at line 11, renamed BACKUPLY_* constants)"
+    ]
+  },
+  {
+    "name": "html_quickform2",
+    "match_file_regex": "(^|/)HTML/QuickForm2\\.php$",
+    "content_regex": "\\bclass\\s+HTML_QuickForm2\\s+extends\\b",
+    "version_regex": "(\\b\\B)",
+    "notes": "PEAR HTML_QuickForm2. Presence-only: the file has only an SVN $Id, no release version. The component path is the HTML/ folder, which also holds HTML_Common2 and the QuickForm2/ sub-folder.",
+    "verified_in": [
+      "matomo@5.13.1 (app/libs/HTML/QuickForm2.php, class HTML_QuickForm2 at line 64)"
+    ]
+  },
+  {
+    "name": "xhprof",
+    "match_file_regex": "(^|/)xhprof_lib/utils/xhprof_runs\\.php$",
+    "content_regex": "\\bclass\\s+XHProfRuns_Default\\b",
+    "version_regex": "(\\b\\B)",
+    "root_up": 2,
+    "notes": "XHProf profiler UI library (lox/xhprof). Presence-only. root_up 2: the component path is the folder above xhprof_lib/.",
+    "verified_in": [
+      "matomo@5.13.1 (app/vendor/lox/xhprof/xhprof_lib/utils/xhprof_runs.php; no composer installed.json is shipped)"
+    ]
+  },
+  {
+    "name": "phpmyadmin",
+    "match_file_regex": "(^|/)libraries/classes/Version\\.php$",
+    "content_regex": "namespace\\s+PhpMyAdmin\\s*;",
+    "version_regex": "const\\s+VERSION\\s*=\\s*'([0-9][0-9.]*)'",
+    "root_up": 2,
+    "notes": "A whole phpMyAdmin copy (5.x layout). root_up 2: the component path is the phpMyAdmin root above libraries/classes/. Its vendor/ libraries are reported separately from vendor/composer/installed.json.",
+    "verified_in": [
+      "wp-phpmyadmin-extension@5.2.3.03 (lib/phpMyAdmin/libraries/classes/Version.php, 5.2.3)"
+    ]
   }
 ]

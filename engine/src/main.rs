@@ -63,6 +63,12 @@ enum Cmd {
         ecosystem: String,
         #[arg(long, value_delimiter = ',', default_value = "8.4")]
         target: Vec<String>,
+        /// Display name stored with the results (e.g. the WordPress.org plugin name)
+        #[arg(long)]
+        display_name: Option<String>,
+        /// Active installs stored with the results (e.g. from the WordPress.org API)
+        #[arg(long)]
+        installs: Option<i64>,
     },
     /// Export static JSON result files
     Export {
@@ -118,9 +124,13 @@ fn run(cli: Cli) -> Result<()> {
             run.finish(&res)?;
             res
         }
-        Cmd::ScanDir { path, name, version, ecosystem, target } => {
-            let run = trace::Run::start(&conn, "scan_dir", json!({"ecosystem": ecosystem, "name": name, "version": version, "path": path, "targets": target}))?;
-            let res = scan_root(&cli, &conn, &run, ecosystem, name, version, path, target);
+        Cmd::ScanDir { path, name, version, ecosystem, target, display_name, installs } => {
+            let run = trace::Run::start(
+                &conn,
+                "scan_dir",
+                json!({"ecosystem": ecosystem, "name": name, "version": version, "path": path, "targets": target, "display_name": display_name, "installs": installs}),
+            )?;
+            let res = store_dir_meta(&conn, ecosystem, name, display_name.as_deref(), *installs).and_then(|_| scan_root(&cli, &conn, &run, ecosystem, name, version, path, target));
             run.finish(&res)?;
             res
         }
@@ -155,21 +165,69 @@ fn http() -> ureq::Agent {
         .build()
 }
 
+/// Store the display name and install count given to scan-dir (a package unpacked by the
+/// caller). Values not given keep what is already stored.
+fn store_dir_meta(conn: &Connection, eco: &str, name: &str, display_name: Option<&str>, installs: Option<i64>) -> Result<()> {
+    if display_name.is_none() && installs.is_none() {
+        return Ok(());
+    }
+    if installs.map_or(false, |n| n < 0) {
+        bail!("--installs must not be negative");
+    }
+    conn.execute(
+        "INSERT INTO package_meta (ecosystem, name, display_name, active_installs, tags, updated_at) VALUES (?1,?2,?3,?4,'[]',?5)
+         ON CONFLICT(ecosystem, name) DO UPDATE SET display_name=COALESCE(excluded.display_name, package_meta.display_name),
+           active_installs=COALESCE(excluded.active_installs, package_meta.active_installs), updated_at=excluded.updated_at",
+        params![eco, name, display_name.map(site::decode_entities), installs, chrono::Utc::now().to_rfc3339()],
+    )?;
+    Ok(())
+}
+
 /// Package metadata from the official WordPress.org API.
 pub struct WpInfo {
     pub version: String,
     pub display_name: Option<String>,
     pub active_installs: Option<i64>,
     pub tags: Vec<String>,
+    /// Official zip of the current version (`download_link`).
+    pub download_link: Option<String>,
+    /// Official zip per published version (`versions`), e.g. "2.28.1" -> "...wp-health.v2.28.1.zip".
+    pub versions: std::collections::BTreeMap<String, String>,
+}
+
+impl WpInfo {
+    /// The official download URL for `version` (the current one when None). WordPress.org does
+    /// not always publish a release as `{slug}.{version}.zip` (stable tag "trunk" gives
+    /// `{slug}.zip`, a tag named "v2.28.1" gives `{slug}.v2.28.1.zip`), so the link always comes
+    /// from the API, never from a URL pattern.
+    fn zip_url(&self, version: Option<&str>) -> Result<String> {
+        let url = match version {
+            None => self.download_link.clone(),
+            Some(v) if v == self.version => self.download_link.clone().or_else(|| self.versions.get(v).cloned()),
+            Some(v) => self.versions.get(v).cloned(),
+        };
+        let Some(url) = url else {
+            bail!("version {} is not published on WordPress.org", version.unwrap_or(&self.version));
+        };
+        if !url.starts_with("https://downloads.wordpress.org/") || url.contains("..") {
+            bail!("unexpected download link: {url}");
+        }
+        Ok(url)
+    }
 }
 
 fn wp_info(eco: &str, slug: &str) -> Result<WpInfo> {
     let url = if eco == "wordpress-plugin" {
-        format!("https://api.wordpress.org/plugins/info/1.2/?action=plugin_information&request[slug]={slug}&request[fields][sections]=0&request[fields][active_installs]=1")
+        format!("https://api.wordpress.org/plugins/info/1.2/?action=plugin_information&request[slug]={slug}&request[fields][sections]=0&request[fields][active_installs]=1&request[fields][versions]=1")
     } else {
-        format!("https://api.wordpress.org/themes/info/1.2/?action=theme_information&request[slug]={slug}&request[fields][sections]=0&request[fields][active_installs]=1")
+        format!("https://api.wordpress.org/themes/info/1.2/?action=theme_information&request[slug]={slug}&request[fields][sections]=0&request[fields][active_installs]=1&request[fields][versions]=1")
     };
     let v: serde_json::Value = serde_json::from_str(&http().get(&url).call()?.into_string()?)?;
+    parse_wp_info(&v)
+}
+
+/// Parse a WordPress.org plugin_information / theme_information response.
+fn parse_wp_info(v: &serde_json::Value) -> Result<WpInfo> {
     if let Some(e) = v.get("error") {
         bail!("WordPress.org: {e}");
     }
@@ -183,16 +241,16 @@ fn wp_info(eco: &str, slug: &str) -> Result<WpInfo> {
         display_name: v.get("name").and_then(|x| x.as_str()).map(|s| site::decode_entities(s)),
         active_installs: v.get("active_installs").and_then(|x| x.as_i64()),
         tags,
+        download_link: v.get("download_link").and_then(|x| x.as_str()).map(String::from),
+        versions: match v.get("versions") {
+            Some(serde_json::Value::Object(m)) => m.iter().filter_map(|(k, x)| x.as_str().map(|u| (k.clone(), u.to_string()))).collect(),
+            _ => Default::default(),
+        },
     })
 }
 
-fn download(eco: &str, slug: &str, version: &str, dest: &Path) -> Result<Vec<u8>> {
-    let url = if eco == "wordpress-plugin" {
-        format!("https://downloads.wordpress.org/plugin/{slug}.{version}.zip")
-    } else {
-        format!("https://downloads.wordpress.org/theme/{slug}.{version}.zip")
-    };
-    let resp = http().get(&url).call().with_context(|| format!("GET {url}"))?;
+fn download(url: &str, dest: &Path) -> Result<Vec<u8>> {
+    let resp = http().get(url).call().with_context(|| format!("GET {url}"))?;
     let mut buf = vec![];
     resp.into_reader().take(MAX_ZIP_BYTES + 1).read_to_end(&mut buf)?;
     if buf.len() as u64 > MAX_ZIP_BYTES {
@@ -234,10 +292,11 @@ fn scan_wp(cli: &Cli, conn: &Connection, run: &trace::Run, eco: &str, slug: &str
          ON CONFLICT(ecosystem, name) DO UPDATE SET display_name=excluded.display_name, active_installs=excluded.active_installs, tags=excluded.tags, updated_at=excluded.updated_at",
         params![eco, slug, info.display_name, info.active_installs, serde_json::to_string(&info.tags)?, chrono::Utc::now().to_rfc3339()],
     )?;
-    let version = version.unwrap_or(info.version);
-    run.note("resolve_version", &format!("{slug}@{version}"))?;
+    let url = info.zip_url(version.as_deref())?;
+    let version = version.unwrap_or_else(|| info.version.clone());
+    run.note("resolve_version", &format!("{slug}@{version} from {url}"))?;
     let work = std::env::temp_dir().join(format!("leapcheck-{}", run.id));
-    let bytes = run.step("fetch", || download(eco, slug, &version, &work))?;
+    let bytes = run.step("fetch", || download(&url, &work))?;
     let hash = format!("{:x}", Sha256::digest(&bytes));
     run.set_meta(Some(&hash), None)?;
     let res = (|| {
@@ -298,6 +357,7 @@ fn scan_root(cli: &Cli, conn: &Connection, run: &trace::Run, eco: &str, name: &s
             f.component = detect::attribute(&f.file, &components);
         }
         detect::post_process(root, &cli.rules, &mut findings);
+        rules.apply_not_reached(name, version, &mut findings);
         per_target.push((t.clone(), findings));
     }
     let confirmed = |f: &Finding| rules.is_confirmed_break(name, f);
