@@ -271,7 +271,7 @@ fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
         let _ = write!(b, "</ul>");
     }
     let _ = write!(b, "<h2>What to do next</h2><ol><li>Update {} to its newest version, then check again.</li><li>Test the upgrade on a staging copy of your site first.</li><li>If problems remain, ask the author in the plugin's <a href=\"https://wordpress.org/support/plugin/{}/\">support forum</a>.</li></ol>\
-<div class=\"card\"><b>Check your whole site in seconds.</b> The free LeapCheck plugin checks every plugin and theme you have installed against PHP 8.3, 8.4 and 8.5. <p><a class=\"cta\" href=\"https://github.com/agkartikey575/leapcheck\">Get LeapCheck</a></p></div>",
+<div class=\"card\"><b>Check your whole site in seconds.</b> The free LeapCheck plugin checks every plugin and theme you have installed against PHP 8.3, 8.4 and 8.5. <p><a class=\"cta\" href=\"/get/\">Get the free plugin</a></p></div>",
         esc(name), esc(&p.slug));
     let _ = write!(b, "<p class=\"small\">Not affiliated with the author of {}. Results are generated automatically from the public code of version {}. Last updated {date}.</p>", esc(name), esc(&p.version));
 
@@ -572,7 +572,7 @@ fn guide_page(g: &Guide, base: &str) -> String {
         let _ = write!(b, "<p class=\"small\">Last updated {}</p>", esc(&g.updated));
     }
     b.push_str(&markdown(&g.body));
-    b.push_str("</article><div class=\"card\"><b>Check your whole site at once.</b> The free LeapCheck plugin checks every plugin and theme you have installed against PHP 8.3, 8.4 and 8.5. <p><a class=\"cta\" href=\"https://github.com/agkartikey575/leapcheck\">Get LeapCheck</a></p></div>");
+    b.push_str("</article><div class=\"card\"><b>Check your whole site at once.</b> The free LeapCheck plugin checks every plugin and theme you have installed against PHP 8.3, 8.4 and 8.5. <p><a class=\"cta\" href=\"/get/\">Get the free plugin</a></p></div>");
     let mut article = serde_json::json!({"@type": "Article", "headline": g.h1, "description": g.description, "url": canonical,
         "publisher": {"@type": "Organization", "name": "LeapCheck"}});
     let d = iso_date(&g.updated);
@@ -742,7 +742,7 @@ pub fn generate(rules: &Path, out: &Path, base: &str) -> Result<usize> {
 <div class="card"><div class="small">PHP 8.2 security support ends in</div><div class="count" id="cd">…</div>{eol}</div>
 <div class="card"><label for="q"><b>Is your plugin ready?</b> Type its WordPress.org slug (the folder name, e.g. <code>contact-form-7</code>)</label><p><input type="search" id="q" placeholder="plugin-slug" autocomplete="off"></p><div id="res" class="small"></div></div>
 <h2>What we've checked so far</h2><p>{total} plugins scanned for PHP 8.4: <b>{c0}</b> compatible, <b>{c1}</b> run with warnings, <b>{c2}</b> have errors, <b>{c3}</b> couldn't be scanned. <a href="/plugins/">See all results</a></p>
-<div class="card"><b>Check your whole site at once.</b> The free LeapCheck plugin checks every plugin and theme you have installed. It only looks up public plugin names and versions, only after you agree, and sends nothing about your site.<p><a class="cta" href="https://github.com/agkartikey575/leapcheck">Get LeapCheck</a></p></div>
+<div class="card"><b>Check your whole site at once.</b> The free LeapCheck plugin checks every plugin and theme you have installed. It only looks up public plugin names and versions, only after you agree, and sends nothing about your site.<p><a class="cta" href="/get/">Get the free plugin</a></p></div>
 <script>
 (function(){{var d=new Date("{DEADLINE}"),el=document.getElementById("cd");function t(){{var s=Math.max(0,(d-new Date())/1000|0);el.textContent=s?Math.floor(s/86400)+" days "+Math.floor(s%86400/3600)+" hours":"Support has ended";}}t();setInterval(t,60000);
 var q=document.getElementById("q"),r=document.getElementById("res"),tm;q.addEventListener("input",function(){{clearTimeout(tm);tm=setTimeout(go,300);}});
@@ -766,6 +766,23 @@ fetch("/v1/wordpress-plugin/"+s+"/index.json").then(function(x){{if(!x.ok)throw 
 <h2>Open source</h2><p>The scanner is open source: <a href="https://github.com/agkartikey575/leapcheck">github.com/agkartikey575/leapcheck</a>.</p>"#;
     write(out, "about/how-we-scan/index.html", &page("How LeapCheck scans plugins for PHP compatibility", "Methodology, verdicts and limits of LeapCheck's automated PHP compatibility scans.", &format!("{base}/about/how-we-scan/"), false, "", about))?;
     n += 1;
+
+    let get = r#"<h1>Get the free LeapCheck plugin</h1>
+<p class="lead">Check every plugin and theme on your WordPress site against PHP 8.3, 8.4 and 8.5 in seconds. Free, and it sends no site data.</p>
+<div class="card"><b>Download</b><p><a class="cta" href="/download/leapcheck-latest.zip">Download LeapCheck (.zip)</a></p>
+<p class="small">The plugin is currently in review for the WordPress.org plugin directory. Until it's listed there, install it from this download. It's the same code, open source on <a href="https://github.com/agkartikey575/leapcheck">GitHub</a>.</p></div>
+<h2>How to install</h2><ol>
+<li>In your WordPress admin, go to <b>Plugins → Add New → Upload Plugin</b>.</li>
+<li>Choose the downloaded <code>.zip</code> file and click <b>Install Now</b>, then <b>Activate</b>.</li>
+<li>Open <b>Tools → LeapCheck</b> and click the button to check your plugins.</li></ol>
+<h2>What it does, and what it doesn't</h2><ul>
+<li>Shows, for each installed plugin and theme, whether it is compatible with PHP 8.3, 8.4 and 8.5, with the problems found and what to do.</li>
+<li>Warns about old libraries bundled inside plugins, and about plugins that bundle different versions of the same library.</li>
+<li>Nothing is fetched until you agree. It only looks up public plugin names and versions; no site address, users or content are sent. See <a href="/privacy/">Privacy</a>.</li>
+<li>Results come from automated static analysis: a strong guide, not a guarantee. Always test an upgrade on a staging copy first.</li></ul>"#;
+    write(out, "get/index.html", &page("Get the free LeapCheck plugin | LeapCheck", "Download the free LeapCheck WordPress plugin: check every plugin and theme on your site against PHP 8.3, 8.4 and 8.5.", &format!("{base}/get/"), false, "", get))?;
+    n += 1;
+    sitemap.push((format!("{base}/get/"), String::new()));
 
     let privacy = r#"<h1>Privacy</h1><p class="small">Last updated: 16 November 2026</p>
 <h2>The short version</h2><ul>

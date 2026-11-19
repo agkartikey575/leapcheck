@@ -548,6 +548,13 @@ jobs:
         # Runs after the JSON validation above, so only our own engine writes HTML.
         run: engine/target/release/leapcheck --db "$RUNNER_TEMP/site.sqlite" site --out public
 
+      - name: Add the plugin download (built from this commit's plugin/ folder)
+        run: |
+          mkdir -p public/download
+          bash plugin/build-zip.sh "$PWD/public/download"
+          cp public/download/leapcheck-*.zip public/download/leapcheck-latest.zip
+          ls -la public/download
+
       - name: Publish to the site branch (the host deploys it automatically)
         if: github.event_name == 'schedule' || inputs.deploy
         env:
