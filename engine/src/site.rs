@@ -677,7 +677,11 @@ pub fn generate(rules: &Path, out: &Path, base: &str) -> Result<usize> {
     let mut pkgs = load(out)?;
     pkgs.sort_by(|a, b| b.installs.unwrap_or(0).cmp(&a.installs.unwrap_or(0)).then(a.slug.cmp(&b.slug)));
     let mut n = 0;
-    let mut sitemap = vec![(format!("{base}/"), String::new()), (format!("{base}/plugins/"), String::new()), (format!("{base}/about/how-we-scan/"), String::new())];
+    let gate_open = std::env::var("LEAPCHECK_INDEX_PLUGINS").map_or(false, |v| v == "1");
+    let mut sitemap = vec![(format!("{base}/"), String::new()), (format!("{base}/about/how-we-scan/"), String::new())];
+    if gate_open {
+        sitemap.push((format!("{base}/plugins/"), String::new()));
+    }
     let mut rows = String::new();
     for p in &pkgs {
         let (html, index) = plugin_page(p, &fixes, base);
@@ -691,7 +695,7 @@ pub fn generate(rules: &Path, out: &Path, base: &str) -> Result<usize> {
     }
     // Plugin directory page
     let list = format!("<h1>Plugin PHP compatibility results</h1><p class=\"lead\">{} plugins checked against PHP 8.3, 8.4 and 8.5. More are added every night.</p><div class=\"scroll\"><table><tr><th>Plugin</th><th>Version</th><th>PHP 8.4</th></tr>{rows}</table></div>", pkgs.len());
-    write(out, "plugins/index.html", &page("WordPress plugin PHP 8.4 compatibility results | LeapCheck", "Which WordPress plugins work on PHP 8.3, 8.4 and 8.5? Automated static scans of public plugin code, with files, lines and fixes.", &format!("{base}/plugins/"), false, "", &list))?;
+    write(out, "plugins/index.html", &page("WordPress plugin PHP 8.4 compatibility results | LeapCheck", "Which WordPress plugins work on PHP 8.3, 8.4 and 8.5? Automated static scans of public plugin code, with files, lines and fixes.", &format!("{base}/plugins/"), !gate_open, "", &list))?;
     n += 1;
 
     // Guides (editorial Markdown); a missing folder simply means no guides yet.
