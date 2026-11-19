@@ -1,6 +1,6 @@
 # LeapCheck operations runbook
 
-Status: v2 (2026-11-16)
+Status: v3 (2026-11-19)
 Related: `docs/07-interfaces.md` (CLI and JSON contract), `.github/workflows/ci.yml`, `.github/workflows/scan.yml`, `lists/README.md` (slug lists), `docs/qa/test-plan.md`.
 
 ## 1. Run a scan locally
@@ -40,7 +40,7 @@ engine/target/release/leapcheck export --db data/local.sqlite --out public
 
 Every subcommand accepts `--db <file>` (default `data/leapcheck.sqlite`), `--rules <dir>` (default `engine/rules`) and `--php-tools <dir>` (default `tools/php`). `--target` is repeatable or comma separated (default `8.4`). `--version` defaults to the latest release; `--kind` defaults to `plugin`. Delete the DB file to start from scratch. `export` prints `{"exported_files":N,"out":...}` and writes nothing when N is 0.
 
-Run a nightly-style scan in GitHub: Actions → "Nightly scan" → "Run workflow" (inputs: shard count 1–20, space-separated slug lists, `force_full` yes/no, deploy yes/no). See section 2 for how a run decides what to scan.
+Run a nightly-style scan in GitHub: Actions → "Nightly scan" → "Run workflow" (inputs: shard count 1–20, default 10 like the nightly; space-separated slug lists; `force_full` yes/no; deploy yes/no). See section 2 for how a run decides what to scan.
 
 ## 2. Nightly scan: incremental and full
 
@@ -49,6 +49,7 @@ The nightly workflow (`.github/workflows/scan.yml`) has four jobs: **plan → bu
 ### How incremental works
 1. **plan** reads the lists (`lists/top-plugins.json` and, if present, `lists/top-themes.json`; format in `lists/README.md`), fetches the `site` branch read-only and lists the files under `v1/`.
 2. For every entry without a pinned version it asks the official WordPress.org API for the latest version: batches of 250 from `query_plugins` / `query_themes` (browse = popular, fields trimmed to what we need), then one trimmed `plugin_information` / `theme_information` call per slug not found in the batches. A 404 (closed or removed) means the entry is not scanned (counted as `unavailable`).
+   - **Release zips.** The plan also keeps the API's `download_link`. About 12% of popular plugins (583 of the 5,000 on 2026-11-19) are not published as `{slug}.{version}.zip`: their stable tag is `trunk` (link `{slug}.zip`) or the tag is named differently from the version (`wp-health.v2.28.1.zip`, `top-level-cats.release-1.0.1.zip`). `scan-wp` builds `{slug}.{version}.zip` itself and gets a 404 for those. Such entries get a `zip` field in `todo.json`; the scan job downloads that link (HTTPS, `downloads.wordpress.org/{kind}/{slug}…zip` only, 80 MB cap), unpacks it with the same rules as the engine (no absolute paths, no `..`, nothing outside the folder, symlinks skipped, at most 50,000 entries and 400 MB) and runs `leapcheck scan-dir --ecosystem wordpress-{kind}` with the same name and version, so the output path is identical. Counted as `planned_release_zip` in `_meta.json` and `release_zip` in the shard stats. Known gap: these results have no `display_name` / `active_installs` (scan-dir does not call the API), so their pages show the slug as the name. The proper fix is in the engine (Next, item 3); then this fallback can be removed.
 3. An entry is **skipped** when `v1/wordpress-{plugin|theme}/{slug}/{version}.json` already exists on the `site` branch. Everything else goes into `todo.json` (artifact `scan-plan`) and is split across the shards (never more shards than entries; no shards and no publish when nothing is new).
 4. If the API cannot be reached, an entry that already has published results is left for the next run (`unresolved_deferred`); a never-scanned entry is scanned and `scan-wp` resolves the version itself. After 5 failed lookups in a row the plan stops calling the API.
 5. **scan** shards stop starting new scans after `SCAN_BUDGET_MIN` (290 min), so export and upload always finish before the 330-minute job limit. Entries not started are counted as `deferred` and are picked up by the next run automatically (they are still missing from the site).
@@ -68,7 +69,7 @@ Everything in the lists is rescanned (published versions are overwritten; older 
 | `engine_sha` | Commit whose engine produced the published latest results. A full rescan that did not finish (a shard failed or entries were deferred) keeps the previous value, so the next run is full again. |
 | `build_sha`, `run_id`, `generated_at` | The commit and workflow run that built this site, and when (UTC). |
 | `mode`, `mode_reason`, `complete` | `full` or `incremental`, why, and whether every shard succeeded with nothing deferred. |
-| `lists`, `counts` | Lists used; `list_entries`, `invalid`, `unavailable`, `unresolved_deferred`, `skipped_unchanged`, `planned`, `scanned_ok`, `scan_failed`, `deferred`, and the totals on the site (`plugins`, `themes`, `versions`). |
+| `lists`, `counts` | Lists used; `list_entries`, `invalid`, `unavailable`, `unresolved_deferred`, `skipped_unchanged`, `planned`, `planned_release_zip` (planned entries scanned from their release zip, section 2), `scanned_ok`, `scan_failed`, `deferred`, and the totals on the site (`plugins`, `themes`, `versions`). |
 
 Check what the live site was built from: `git fetch origin site && git show FETCH_HEAD:v1/_meta.json | jq .`
 
@@ -138,6 +139,8 @@ Morning check: open the latest "Nightly scan" run, read each shard's `health-sha
 | `publish` failed at "Overlay": "no new results from any shard" | every shard failed | See the shard logs; the current site stays live. |
 | `publish` failed at "Validate output" | invalid JSON, HTML, symlinks or other files in `public/` before site generation | Engine export bug, or the `site` branch was edited by hand; nothing was published. |
 | Plan says `0 of N entries to scan` | nothing new on WordPress.org | Normal; build, scan and publish are skipped. |
+| Many `scan_failed` with `GET https://downloads.wordpress.org/...{slug}.{version}.zip: status code 404` | the release has no versioned zip (stable tag `trunk` or a differently named tag) and the plan did not get a `download_link` for it (API outage, pinned version) | Fixed for resolved entries by the release-zip path (section 2). A pinned version that 404s does not exist as a zip: remove or correct the pin. |
+| `publish` red at "Publish to the site branch": "over the host limit" | the site has more files than `MAX_SITE_FILES` (15,000) | The site branch was still pushed (scan state is kept), but the host may reject the deployment and keep serving the previous one: check the Vercel deployment. Fix: bundle JSON per package (Next, item 2). |
 
 Rollback: the `site` branch is force-pushed, so roll back on the host: in the Vercel dashboard open the project → Deployments → pick the previous production deployment → "Instant Rollback" / "Promote to Production". The scan never deletes previous deployments. Then fix the cause; the next run publishes again.
 
@@ -174,13 +177,39 @@ Target cost: €0. Figures below are from public documentation as we understand 
 - Scheduled workflows in public repos are disabled automatically after 60 days without repository activity; re-enable in the Actions tab.
 - The repository must stay **public** for free minutes. A private repo would consume the included minutes quickly.
 
-Capacity estimate for the "60k plugins" goal (UNVERIFIED until we measure real scan times): 20 shards × 5.5 h = 110 runner-hours per night. At ~5 s per plugin per target that is ~26k plugin×target scans per hour of total capacity; one full pass of 60k plugins × 3 targets ≈ 180k scans ≈ 50 runner-hours. The nightly scan is now incremental (section 2), so after the first full pass a night only scans versions released since the previous run; a full rescan happens only after an engine change or on request. The version lookup itself costs about one API request per 250 entries plus one per entry not in the popular pages.
+### Measured scan time and sizing (2026-11-19)
+Evidence (real GitHub-hosted runners, from the `traces-shard-*` SQLite of the full rescan run 44266514978 on 2026-11-18, 999 entries of the top 1,000 in 20 shards): 959 successful scans, mean **13.6 s** per plugin for all three targets (median 4.5 s, p90 33.5 s, p99 143 s, max 432 s for `surecart`), 3.6 runner-hours of scanning in total. Shards of ~50 entries took 8–17 min wall time including ~1 min of setup. Adding the 1 s pause and per-entry overhead gives **~15 s per entry** as the sizing figure. A local cross-check of 15 corpus plugins (same binary, 4 vCPU machine) gave the same picture: small plugins 2–5 s, large ones 30–150 s (table in the change log entry for v3). Themes were not measured in CI; two local theme scans took 3.6 s and 8.3 s (UNVERIFIED as a theme average). The top 1,000 are on average larger than plugins ranked 1,001–5,000, so 15 s is conservative for the new entries.
+
+Sizing for top 5,000 plugins + top 500 themes (5,500 entries):
+
+| Run | Entries | Runner-hours (×15 s) | Per shard at 10 shards | Fits one night? |
+|---|---|---|---|---|
+| First run after adding the lists (incremental: the ~950 already published are skipped) | ~4,550 | ~19 h | ~1.9 h | yes, budget is 290 min per shard |
+| Full rescan (engine change or `force_full`) | 5,500 | ~23 h | ~2.3 h | yes |
+| Typical incremental night (new releases, ~5% per night seen on the top 1,000) | ~275 | ~1.2 h | ~7 min | yes |
+
+So the first full coverage of 5,000 + 500 takes **one nightly run** at the default 10 shards (capacity 10 × 290 min ≈ 48 runner-hours per run, about twice what is needed). If a run is slower than measured, the time budget defers the rest and the next night finishes it (at most 2 runs unless scans are 2× slower than measured). 20 shards would halve wall time but leave no Free-plan job slots for CI during the run; not needed at this size. Shards are assigned by slug index modulo N, so they are balanced by count (455–456 entries each in the planned first run); one shard can still draw several of the slowest plugins (max 7 min each), which is far inside the budget.
+
+60k goal (UNVERIFIED extrapolation): 60,000 × 15 s ≈ 250 runner-hours for a full pass, i.e. ~5 nights at 10 shards or ~2.6 nights at 20; incremental nights after that stay small. The host file limit (below) is the binding constraint long before runner time.
+
+The version lookup costs about one API request per 250 entries plus one per entry not in the popular pages (the local dry run for 5,500 entries made 22 page requests, 0 per-slug lookups, in 31 s).
 
 ### Vercel (Hobby plan)
 - **Hobby is for personal, non-commercial use only.** LeapCheck plans paid tiers, so this needs an owner decision: stay on Hobby only while the project is non-commercial, move to a Pro plan (paid), or use a free alternative (section 7). Because the output is plain static files on a git branch, switching hosts needs no workflow change.
-- Bandwidth: 100 GB/month on Hobby.
-- Deployments: 100 per day; the nightly uses 1 (one push to `site`).
-- Files per deployment: Vercel limits the number of files per deployment (in the order of 15,000 on Hobby for CLI uploads; the limit for Git deployments is not confirmed). Tens of thousands of plugin versions will exceed it; options: publish only the latest N versions per plugin, pack results into fewer files, or move the JSON to a host without that limit.
+- Bandwidth: 100 GB/month on Hobby (UNVERIFIED, recheck).
+- Deployments: 100 per day; the nightly uses 1 (one push to `site`) (UNVERIFIED, recheck).
+- **Files per deployment: UNVERIFIED.** The official docs could not be opened from our environment on 2026-11-19 (vercel.com not reachable from the build sandbox). What search results show: a Vercel limits page states "the maximum number of files that can be uploaded when creating a CLI Deployment is 15,000 for source files"; an older copy listed 10,000 source files and 16,000 build output files; a Vercel changelog entry "CLI deployment limits removed" (dated June 2026 by a mirror) may have lifted CLI-specific limits, but it is not clear whether that covers file counts or Git deployments. Our deployment is a Git deployment with no build step, so every file on the `site` branch is a source file. Until someone confirms the figure in the Vercel dashboard or docs, we plan for **15,000** (`MAX_SITE_FILES` in `scan.yml`; the publish step warns above 80% and turns red above it, after pushing).
+
+File count (measured on the `site` branch of run 44504861180: 3,065 files for 960 plugins / 1,100 versions = 972 HTML + 2,061 JSON + a few static files):
+
+| Coverage | HTML | JSON (index + one per version) | Total | Under 15,000? |
+|---|---|---|---|---|
+| Today (960 plugins) | 972 | 2,061 | 3,065 | yes |
+| 5,000 plugins + 500 themes, first run (1.15 versions per package as today; theme pages not rendered yet) | ~5,010 | ~11,800 | **~16,800** | **no** |
+| Same, with theme pages (Next, item 1) | ~5,510 | ~11,800 | ~17,300 | no |
+| One month later (~5% new versions per night ≈ +275 JSON per night) | ~5,510 | ~20,000 | ~25,500 | no (also over Cloudflare Pages' 20,000) |
+
+So 5,500 packages with one JSON file per version do **not** fit, and per-version files grow every night. Plan (Next, item 2): bundle JSON per package, which makes the count 1 HTML + 1 JSON per package (~11,000 files for 5,500, independent of version history). Until that lands, expect the first runs after the list expansion to exceed the limit; the `site` branch keeps the full results either way, and the live site stays on the last accepted deployment.
 
 ## 7. Fallback host: Cloudflare Pages (steps only, not set up)
 
@@ -193,7 +222,47 @@ Use this if the Vercel Hobby non-commercial rule (or a limit) forces a move. Nee
 5. Pass `--base-url https://<new-domain>` to `leapcheck site` in `scan.yml` (canonical links and sitemap), and update the URL the WordPress plugin fetches from.
 6. Point the custom domain (if any) to Pages, then remove the Vercel project. Exit plan: the same `site` branch works on GitHub Pages too (Settings → Pages → Deploy from branch `site`, root), with no custom headers.
 
-## 8. Change log
+## 8. Next
+
+### 1. Theme pages in `leapcheck site` (spec for the engine; `engine/src/site.rs` is not changed by ops)
+Today `site::load()` reads only `v1/wordpress-plugin/`, so the 500 themes get JSON under `v1/wordpress-theme/` but no HTML page, no directory entry and no sitemap entry (checked 2026-11-19: a site build from plugin + theme JSON wrote pages only under `plugins/`). Required behaviour:
+
+1. **Load both ecosystems.** `load()` iterates `v1/wordpress-plugin/` and `v1/wordpress-theme/`; `Pkg` gets a `kind` (`plugin` | `theme`). Same parsing, same "latest = last version in sorted `index.json`", same history.
+2. **URLs, separate namespace** (a plugin and a theme may share a slug): theme page `themes/{slug}/index.html` → `/themes/{slug}/`; directory `themes/index.html` → `/themes/`. Plugin URLs do not change. Never write a theme page under `plugins/`.
+3. **Page content** = the plugin page template with the kind-specific strings:
+   - title: `Is {name} theme compatible with PHP 8.4? …` (same four verdict variants), H1 `Is the {name} theme compatible with PHP 8.4?`; description says "theme";
+   - breadcrumb `Home › Themes › {name}` (and the JSON-LD `BreadcrumbList` item 2 = `Themes`, `{base}/themes/`);
+   - raw data link `/v1/wordpress-theme/{slug}/{version}.json`;
+   - JSON-LD `about.url` = `https://wordpress.org/themes/{slug}/`;
+   - "What to do next": "Update the {name} theme…", support forum `https://wordpress.org/support/theme/{slug}/`; the "unknown" text says "theme";
+   - not-affiliated line: "Not affiliated with the author of the {name} theme."
+   - all theme-derived text HTML-escaped exactly like plugin text (`esc()`), JSON-LD `</` escaped.
+4. **Indexing gate:** same rule and same `LEAPCHECK_INDEX_PLUGINS=1` switch as plugin pages (noindex until the accuracy gate passes); sitemap gets `/themes/` and indexable theme pages only when the gate is open.
+5. **Directory page** `/themes/`: same table as `/plugins/` (Theme, Version, PHP 8.4), sorted by active installs. Header nav gets a "Themes" link after "Plugins".
+6. **Libraries page:** a bundling theme links to `/themes/{slug}/`, not `/plugins/{slug}/`.
+7. **Home page:** counts read "{p} plugins and {t} themes scanned for PHP 8.4"; the search box may stay plugin-only for now.
+8. **Size:** `/plugins/index.html` is 172 KB for 964 rows, so ~0.9 MB at 5,000. Either paginate (500 rows per page, `plugins/page/2/`, … each counts as one file) or list the top 500 and link the rest from `/libraries/` and search. Either way add the page count to the file-count budget (section 6).
+9. **Tests:** a fixture with one plugin and one theme of the same slug produces two pages at different URLs; a theme page contains `/v1/wordpress-theme/` and `wordpress.org/themes/`; nothing theme-related is written under `plugins/`; escaping test with a malicious theme name.
+No workflow change is needed: publish already merges `v1/wordpress-theme/` and runs `leapcheck site` last.
+
+### 2. Fit the host file limit: one JSON file per package (engine + WordPress plugin + interfaces doc)
+Needed before (or right after) the first 5,000 + 500 run, see the file-count table in section 6.
+- `leapcheck export` writes `v1/wordpress-{kind}/{slug}.json` = today's `index.json` fields plus `results: {version: <today's per-version document>}` for every version, and stops writing `{slug}/index.json` and `{slug}/{version}.json`. Count: 1 JSON + 1 HTML per package = ~11,000 files for 5,500, growing with packages only, not with versions. Measured per-version JSON today: mean 15.6 KB, median 1.5 KB, max 437 KB, so bundles stay small; if a bundle passes ~1 MB, keep full findings only for the latest 3 versions and verdict + counts for older ones.
+- Publish merge (`scan.yml`, ops): replace the `index.json` union with a per-package merge of `results` (new shard wins per version), then the same validation.
+- WordPress plugin: fetch `/v1/wordpress-{kind}/{slug}.json` and pick the installed version locally (also one request per package instead of two). Keep serving the old paths during a transition only if the file budget allows; otherwise switch in one release.
+- Site generator: read the bundles.
+- Contract change: update `docs/07-interfaces.md` first.
+- Beyond ~7,000 packages even this passes 15,000 files (2 per package); for the 60k goal the options are a prefix-bundled JSON API (`v1/wordpress-plugin/_by-prefix/{aa}.json`) plus HTML pages only for packages above an install threshold, or a host without a per-deployment file cap (owner decision; GitHub Pages' limits are UNVERIFIED).
+
+### 3. Engine: download from the API's `download_link`
+`scan-wp` builds `https://downloads.wordpress.org/{kind}/{slug}.{version}.zip`, which 404s for ~12% of popular plugins (section 2). Fix in `engine/src/main.rs`: read `download_link` in `wp_info()` and use it when the requested version equals the API's version (validate host `downloads.wordpress.org` and path `/{kind}/{slug}…zip`); keep the constructed URL for pinned older versions. Then remove the release-zip path from `scan.yml` (the scan-dir results also lack the display name and install count). An engine change triggers a full rescan (~23 runner-hours, one night).
+
+### 4. Observations to follow up
+- Scheduled runs start hours late: cron is 02:17 UTC, but the last runs started at 10:10–10:43 UTC (GitHub delays scheduled workflows under load; cause UNVERIFIED). Harmless for a nightly, but do not schedule anything that assumes the scan finished by a fixed time.
+- `actionlint` was not run on v3 of `scan.yml` (YAML parsed and every `run:` script passed `bash -n`); run it in CI.
+
+## 9. Change log
 - 2026-11-02: v1: CI, nightly sharded scan, Vercel deploy, security notes.
 - 2026-11-04: aligned with the real CLI (`--db` on every subcommand, comma-separated `--target`); one shard simulated locally end to end (akismet 5.7.2 compatible, tablepress 1.9.2 breaks: 5 errors, 8 warnings).
 - 2026-11-16: v2: incremental nightly scans (skip versions already on the `site` branch; publish overlays the previous `v1/`), `force_full` input and automatic full rescan after engine changes (`v1/_meta.json`), optional theme list, per-shard time budget with deferral, publish survives failed shards, no host secrets (Git deploy of `site`), Cloudflare Pages fallback steps.
+- 2026-11-19: v3: lists grown to the top 5,000 plugins and top 500 themes (WordPress.org API, browse popular). Last run's 40 `scan_failed` were all download 404s of `{slug}.{version}.zip` for releases without a versioned zip (none were closed plugins, timeouts, oversized zips or phpcs errors); the plan now keeps `download_link` and the scan uses it (release-zip path). Measured scan time from CI traces (mean 13.6 s per plugin, 3 targets) and sized the run: one night at 10 shards. Manual-run shard default 4 → 10. File-count guard before deploy (`MAX_SITE_FILES`). Local timings (s, 3 targets): akismet 5.7.2 3.0, classic-editor 1.7.0 1.7, duplicate-post 4.7 2.5, redirection 4.0 2.2, contact-form-7 5.1 2.5, limit-login-attempts-reloaded 3.4.0 4.9, wordpress-seo 28.8 33.7, elementor 4.3.6 148.9, woocommerce 3.5.0 49.4, jetpack 6.5.2 47.9, updraftplus 1.16.0 30.4, mailpoet 5.44.0 54.4, wordfence 7.1.17 12.8, tablepress 1.9.2 7.5, gmail-smtp 1.1.9 11.3 (mean 27.5 s, median 11.3 s; the corpus is weighted towards large plugins). Theme pages, per-package JSON bundles and the engine download fix are specified under Next.

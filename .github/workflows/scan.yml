@@ -31,7 +31,7 @@ on:
       shards:
         description: "Number of parallel shards (1-20)"
         required: false
-        default: "4"
+        default: "10" # same as the nightly default below
       list:
         description: "Space-separated slug lists (JSON arrays of {slug,version?,kind?} objects or plain plugin slugs); missing files are skipped"
         required: false
@@ -126,6 +126,8 @@ jobs:
       - name: Build the scan plan
         id: plan
         env:
+          # 10 shards x SCAN_BUDGET_MIN ~ 48 runner-hours per run; a full pass of 5,500 entries needs ~23
+          # (measured ~15 s per entry incl. overhead), leaving headroom and 10 of the 20 Free-plan job slots for CI.
           REQUESTED: ${{ inputs.shards || '10' }}
           MODE: ${{ steps.mode.outputs.mode }}
           # Trimmed WordPress.org API responses: we only need slug and version.
@@ -170,7 +172,8 @@ jobs:
                    "${base}?action=${act}&request[browse]=popular&request[per_page]=250&request[page]=${page}&${TRIM}"; then
                 echo "::warning::WordPress.org $act page $page failed; falling back to per-slug lookups"; break
               fi
-              jq -r --arg k "$key" '.[$k][]? | [.slug, .version] | @tsv' "$P/page.json" >> "$seen"
+              # 3rd column: the API's download_link (plugins only), see the "zip" field below.
+              jq -r --arg k "$key" '.[$k][]? | [.slug, .version, (.download_link // "")] | @tsv' "$P/page.json" >> "$seen"
               pages=$(jq -r '.info.pages // 0' "$P/page.json")
               [ "$page" -ge "$pages" ] && break
               [ -z "$(cut -f1 "$seen" | grep -vxFf - "$need" | head -n 1)" ] && break
@@ -186,7 +189,7 @@ jobs:
               code=$(curl -gsS --retry 2 --retry-delay 5 -m 60 -o "$P/one.json" -w '%{http_code}' \
                      "${base}?action=${info}&request[slug]=${slug}&${TRIM}" || true)
               if [ "$code" = 200 ] && jq -e '.version | type == "string"' "$P/one.json" > /dev/null 2>&1; then
-                printf '%s\t%s\n' "$slug" "$(jq -r .version "$P/one.json")" >> "$out"; errs=0
+                jq -r --arg s "$slug" '[$s, .version, (.download_link // "")] | @tsv' "$P/one.json" >> "$out"; errs=0
               elif [ "$code" = 404 ]; then
                 printf '%s\t!unavailable\n' "$slug" >> "$out"; errs=0
                 echo "::warning::$kind $slug is not available on WordPress.org: $(jq -r '.error // "not found"' "$P/one.json" 2>/dev/null | head -c 100)"
@@ -207,16 +210,23 @@ jobs:
              --rawfile files "$P/prev-files.txt" \
              --rawfile fp "$P/found-plugin.tsv" --rawfile ft "$P/found-theme.tsv" \
              --slurpfile entries "$P/valid.jsonl" '
-            def tsv($kind): split("\n") | map(select(length > 0) | split("\t") | {key: ($kind + "/" + .[0]), value: .[1]});
-            (($fp | tsv("plugin")) + ($ft | tsv("theme")) | from_entries) as $found
+            def tsv($kind; $col): split("\n") | map(select(length > 0) | split("\t") | {key: ($kind + "/" + .[0]), value: (.[$col] // "")});
+            (($fp | tsv("plugin"; 1)) + ($ft | tsv("theme"; 1)) | from_entries) as $found
+            | (($fp | tsv("plugin"; 2)) + ($ft | tsv("theme"; 2)) | from_entries) as $dls
             | ($files | split("\n") | map(select(length > 0) | {key: ., value: true}) | from_entries) as $have
             | [ $entries[]
                 | . as $e
                 | ($found[$e.kind + "/" + $e.slug]) as $v
+                | ($dls[$e.kind + "/" + $e.slug] // "") as $dl
                 | if $e.version != null then $e
                   elif $v == null then $e + {unresolved: true}
                   elif ($v | startswith("!")) then $e + {unavailable: true}
                   elif ($v | test("^[A-Za-z0-9._-]{1,50}$")) then $e + {version: $v}
+                    # The release is not published as {slug}.{version}.zip (stable tag "trunk", or a tag
+                    # named differently from the version): keep the official download_link for the scan.
+                    + (if $dl == "" or $dl == "https://downloads.wordpress.org/\($e.kind)/\($e.slug).\($v).zip" then {}
+                       elif ($dl | test("^https://downloads\\.wordpress\\.org/\($e.kind)/\($e.slug)(\\.[A-Za-z0-9._-]{1,60})?\\.zip$")) then {zip: $dl}
+                       else {} end)
                   else $e + {unresolved: true} end
                 | .dir = "v1/wordpress-\(.kind)/\(.slug)/"
                 | .action = if .unavailable then "unavailable"
@@ -228,7 +238,8 @@ jobs:
                 unavailable: map(select(.action == "unavailable")) | length,
                 unresolved_deferred: map(select(.action == "unresolved")) | length,
                 skipped: map(select(.action == "skip")) | length,
-                todo: map(select(.action == "scan") | {kind, slug} + (if .version then {version} else {} end))
+                todo: map(select(.action == "scan") | {kind, slug} + (if .version then {version} else {} end) + (if .zip then {zip} else {} end)),
+                release_zip: map(select(.action == "scan" and .zip)) | length
               }' > "$P/plan-raw.json"
           jq -c '.todo' "$P/plan-raw.json" > "$P/todo.json"
           todo=$(jq length "$P/todo.json")
@@ -236,7 +247,8 @@ jobs:
                 --argjson entries "$(wc -l < "$P/valid.jsonl")" --argjson invalid "$invalid" \
                 --slurpfile mode "$P/mode.json" --arg lists "${lists[*]}" \
             '$mode[0] + {lists: ($lists | split(" ")), list_entries: $entries, invalid: $invalid,
-                         unavailable: $raw.unavailable, unresolved_deferred: $raw.unresolved_deferred, skipped_unchanged: $raw.skipped, planned: $todo}' > "$P/summary.json"
+                         unavailable: $raw.unavailable, unresolved_deferred: $raw.unresolved_deferred, skipped_unchanged: $raw.skipped, planned: $todo,
+                         planned_release_zip: $raw.release_zip}' > "$P/summary.json"
           rm -f "$P/plan-raw.json" "$P/page.json" "$P/one.json"
 
           # 4. Shards: never more than there is work, capped at 20 (Free plan concurrency).
@@ -350,23 +362,70 @@ jobs:
           echo "Shard $SHARD/$TOTAL: $(wc -l < "$RUNNER_TEMP/entries.jsonl") entries"
 
       - name: Scan
+        env:
+          # Safe unzip for release_zip entries (see below), same rules as the engine's own unpack: no absolute
+          # paths, no "..", nothing outside the target folder, symlinks skipped, at most 50,000 entries and
+          # 400 MB unpacked. zipfile never writes more than an entry's declared size and checks its CRC.
+          # Run with python3 -I from the workspace, never from inside the extracted folder.
+          EXTRACT_PY: |
+            import os, shutil, stat, sys, zipfile
+            src, dest = sys.argv[1], os.path.realpath(sys.argv[2])
+            with zipfile.ZipFile(src) as z:
+                infos = z.infolist()
+                if len(infos) > 50000: sys.exit("too many zip entries")
+                total = 0
+                for i in infos:
+                    name = i.filename.replace("\\", "/")
+                    if stat.S_ISLNK(i.external_attr >> 16): continue
+                    if name.startswith("/") or ".." in name.split("/") or ":" in name: sys.exit("unsafe path in zip: %r" % name)
+                    out = os.path.realpath(os.path.join(dest, name))
+                    if not out.startswith(dest + os.sep): sys.exit("unsafe path in zip: %r" % name)
+                    if i.is_dir(): os.makedirs(out, exist_ok=True); continue
+                    total += i.file_size
+                    if total > 400 * 1024 * 1024: sys.exit("unpacked size over limit")
+                    os.makedirs(os.path.dirname(out), exist_ok=True)
+                    with z.open(i) as r, open(out, "wb") as w: shutil.copyfileobj(r, w)
         run: |
           mkdir -p data logs
-          ok=0; failed=0; deferred=0
+          ok=0; failed=0; deferred=0; release_zip=0
+          # release_zip entries: WordPress.org publishes this release only under its official download_link
+          # (e.g. {slug}.zip when the stable tag is trunk), so scan-wp's {slug}.{version}.zip would 404.
+          # Download that link (HTTPS, downloads.wordpress.org only, 80 MB cap like the engine), unpack it
+          # safely, and scan the folder with scan-dir under the same ecosystem, name and version.
+          scan_release_zip() {
+            local w="$RUNNER_TEMP/pkg" root
+            rm -rf "$w"; mkdir -p "$w/x"
+            curl -fsS --proto '=https' --max-redirs 0 --max-filesize 83886080 --retry 2 --retry-delay 10 -m 300 \
+                 -o "$w/p.zip" "$zip" || { echo "::warning::download failed: $zip"; return 1; }
+            python3 -I -c "$EXTRACT_PY" "$w/p.zip" "$w/x" || return 1
+            root="$w/x"; [ -d "$w/x/$slug" ] && root="$w/x/$slug" # zips hold one top-level folder named after the slug
+            timeout 20m engine/target/release/leapcheck scan-dir --db "$DB" --path "$root" --name "$slug" \
+              --version "$version" --ecosystem "wordpress-$kind" --target "$TARGETS"
+            local rc=$?; rm -rf "$w"; return $rc
+          }
           deadline=$((SECONDS + SCAN_BUDGET_MIN * 60))
           while IFS= read -r entry; do
             if [ "$SECONDS" -ge "$deadline" ]; then deferred=$((deferred + 1)); continue; fi
             slug=$(jq -r '.slug' <<<"$entry")
             version=$(jq -r '.version // empty' <<<"$entry")
             kind=$(jq -r '.kind // "plugin"' <<<"$entry")
+            zip=$(jq -r '.zip // empty' <<<"$entry")
             # Only accept WordPress.org-style slugs; the list is data, never shell.
             if ! [[ "$slug" =~ ^[a-z0-9][a-z0-9-]{0,199}$ ]] || ! [[ -z "$version" || "$version" =~ ^[A-Za-z0-9._-]{1,50}$ ]] || ! [[ "$kind" =~ ^(plugin|theme)$ ]]; then
               echo "::warning::skipping invalid entry: $entry"; failed=$((failed+1)); continue
             fi
+            if [ -n "$zip" ] && { [ -z "$version" ] || ! [[ "$zip" =~ ^https://downloads\.wordpress\.org/${kind}/${slug}(\.[A-Za-z0-9._-]{1,60})?\.zip$ ]]; }; then
+              echo "::warning::skipping entry with an unexpected download link: $entry"; failed=$((failed+1)); continue
+            fi
             args=(--db "$DB" --slug "$slug" --kind "$kind" --target "$TARGETS")
             [ -n "$version" ] && args+=(--version "$version")
             # A failed scan is recorded as a failed run in the DB (see `leapcheck runs --failed`).
-            if timeout 20m engine/target/release/leapcheck scan-wp "${args[@]}" 2>>"logs/shard-$SHARD.jsonl"; then
+            if [ -n "$zip" ]; then
+              release_zip=$((release_zip+1))
+              if scan_release_zip 2>>"logs/shard-$SHARD.jsonl"; then ok=$((ok+1)); else
+                failed=$((failed+1)); echo "::warning::scan failed: $kind $slug $version from $zip (see logs/shard-$SHARD.jsonl)"
+              fi
+            elif timeout 20m engine/target/release/leapcheck scan-wp "${args[@]}" 2>>"logs/shard-$SHARD.jsonl"; then
               ok=$((ok+1))
             else
               failed=$((failed+1))
@@ -375,10 +434,11 @@ jobs:
             sleep 1 # be polite to downloads.wordpress.org
           done < "$RUNNER_TEMP/entries.jsonl"
           [ "$deferred" -eq 0 ] || echo "::warning::time budget reached: $deferred entries deferred to the next run"
-          echo "ok=$ok failed=$failed deferred=$deferred"
+          echo "ok=$ok failed=$failed deferred=$deferred release_zip=$release_zip"
           mkdir -p stats
           jq -n --argjson shard "$SHARD" --argjson ok "$ok" --argjson failed "$failed" --argjson deferred "$deferred" \
-            '{shard: $shard, ok: $ok, failed: $failed, deferred: $deferred}' > "stats/shard-$SHARD.json"
+                --argjson release_zip "$release_zip" \
+            '{shard: $shard, ok: $ok, failed: $failed, deferred: $deferred, release_zip: $release_zip}' > "stats/shard-$SHARD.json"
           echo "SCAN_OK=$ok" >> "$GITHUB_ENV"
           echo "SCAN_FAILED=$failed" >> "$GITHUB_ENV"
 
@@ -528,6 +588,7 @@ jobs:
              counts: {list_entries: $plan[0].list_entries, invalid: $plan[0].invalid, unavailable: $plan[0].unavailable,
                       unresolved_deferred: $plan[0].unresolved_deferred,
                       skipped_unchanged: $plan[0].skipped_unchanged, planned: $plan[0].planned,
+                      planned_release_zip: ($plan[0].planned_release_zip // 0),
                       scanned_ok: ([$stats[].ok] | add // 0), scan_failed: ([$stats[].failed] | add // 0),
                       deferred: ([$stats[].deferred] | add // 0),
                       plugins: $plugins, themes: $themes, versions: $versions}}' > public/v1/_meta.json
@@ -559,7 +620,19 @@ jobs:
         if: github.event_name == 'schedule' || inputs.deploy
         env:
           GH_TOKEN: ${{ github.token }}
+          # Files per deployment the host accepts (Vercel: 15,000 in its docs for CLI uploads; the Git
+          # deployment figure is UNVERIFIED, see docs/ops/runbook.md section 6). Over it, we still push (the
+          # site branch is the scan state the next run builds on) but turn the run red: the host may keep
+          # serving the previous deployment.
+          MAX_SITE_FILES: "15000"
         run: |
+          files=$(find public -type f | wc -l)
+          case "$MAX_SITE_FILES" in ''|*[!0-9]*) echo "::error::MAX_SITE_FILES must be a number"; exit 1;; esac
+          over=false
+          if [ "$files" -gt "$MAX_SITE_FILES" ]; then over=true
+          elif [ $((files * 10)) -gt $((MAX_SITE_FILES * 8)) ]; then
+            echo "::warning::site has $files files, over 80% of the host limit ($MAX_SITE_FILES); see docs/ops/runbook.md section 6"
+          fi
           # The site branch holds only generated output and is replaced on every run.
           cd public
           git init -q
@@ -569,3 +642,7 @@ jobs:
             commit -q -m "Site build ${GITHUB_RUN_ID} ($(date -u +%F))"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" site
           echo "Published $(find . -type f -not -path './.git/*' | wc -l) files to the site branch"
+          if [ "$over" = true ]; then
+            echo "::error::site has $files files, over the host limit of $MAX_SITE_FILES: the host may reject this deployment and keep the previous one live (docs/ops/runbook.md section 6)"
+            exit 1
+          fi
