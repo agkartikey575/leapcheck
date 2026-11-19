@@ -23,10 +23,20 @@ struct ExtensionRule {
     patterns: Vec<String>,
 }
 
+#[derive(Deserialize)]
+struct ConfirmedBreak {
+    package: String,
+    rule_id: String,
+    path_regex: String,
+}
+
 pub struct Rules {
     signatures: Vec<(String, Regex, Regex)>,
     extensions: Vec<(String, Vec<Regex>)>,
     retire: Option<serde_json::Value>,
+    /// Errors in bundled library code that were checked by hand and are reached by the
+    /// package (package, rule pattern, path): they keep the "breaks" verdict.
+    confirmed: Vec<(String, String, Regex)>,
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>> {
@@ -53,11 +63,30 @@ impl Rules {
             .into_iter()
             .map(|e| (e.extension, e.patterns.iter().filter_map(|p| Regex::new(p).ok()).collect()))
             .collect();
-        Ok(Rules { signatures, extensions, retire })
+        let confirmed_rules: Vec<ConfirmedBreak> = read_json(&dir.join("confirmed-breaks.json"))?.unwrap_or_default();
+        let mut confirmed = vec![];
+        for c in confirmed_rules {
+            match Regex::new(&c.path_regex) {
+                Ok(re) => confirmed.push((c.package, c.rule_id, re)),
+                Err(_) => eprintln!("{{\"level\":\"warn\",\"msg\":\"invalid confirmed-break rule\",\"package\":\"{}\"}}", c.package),
+            }
+        }
+        Ok(Rules { signatures, extensions, retire, confirmed })
     }
 
     pub fn summary(&self) -> String {
-        format!("signatures={} extensions={} retirejs={}", self.signatures.len(), self.extensions.len(), self.retire.is_some())
+        format!(
+            "signatures={} extensions={} retirejs={} confirmed_breaks={}",
+            self.signatures.len(),
+            self.extensions.len(),
+            self.retire.is_some(),
+            self.confirmed.len()
+        )
+    }
+
+    /// A bundled-library error in `package` that was checked by hand and is reachable.
+    pub fn is_confirmed_break(&self, package: &str, f: &crate::model::Finding) -> bool {
+        self.confirmed.iter().any(|(p, rid, re)| p == package && rule_matches(rid, &f.rule_id) && re.is_match(&f.file))
     }
 }
 
@@ -305,11 +334,126 @@ fn rule_ident(rule: &str) -> Option<String> {
 
 /// Remove PHP comments (/* */ blocks, // and # line comments, keeping #[attributes]) so that
 /// words inside comments never count as guards, alternatives or requirements. Line count is kept.
+/// A small lexer: comment markers inside strings (`'/*'`, `"#fff"`, `'http://'`), heredocs and
+/// HTML outside `<?php ... ?>` are left alone.
 pub fn strip_comments(text: &str) -> String {
-    let block = Regex::new(r"(?s)/\*.*?\*/").unwrap();
-    let no_blocks = block.replace_all(text, |c: &regex::Captures| "\n".repeat(c[0].matches('\n').count()));
-    let line_c = Regex::new(r"(^|[^:\\])//.*$|#[^\[].*$|#$").unwrap();
-    no_blocks.lines().map(|l| line_c.replace(l, "$1").to_string()).collect::<Vec<_>>().join("\n")
+    #[derive(PartialEq)]
+    enum St {
+        Html,
+        Code,
+        Quote(char),
+        Line,
+        Block,
+        Heredoc(String),
+    }
+    let c: Vec<char> = text.chars().collect();
+    let n = c.len();
+    let at = |i: usize, s: &str| s.chars().enumerate().all(|(k, ch)| c.get(i + k) == Some(&ch));
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut out = String::with_capacity(text.len());
+    let mut st = St::Html;
+    let mut i = 0;
+    while i < n {
+        let ch = c[i];
+        match &st {
+            St::Html => {
+                if at(i, "<?") {
+                    st = St::Code;
+                    out.push_str("<?");
+                    i += 2;
+                    continue;
+                }
+                out.push(ch);
+            }
+            St::Code => {
+                if at(i, "?>") {
+                    st = St::Html;
+                    out.push_str("?>");
+                    i += 2;
+                    continue;
+                }
+                match ch {
+                    '\'' | '"' | '`' => {
+                        st = St::Quote(ch);
+                        out.push(ch);
+                    }
+                    '/' if c.get(i + 1) == Some(&'/') => st = St::Line,
+                    '/' if c.get(i + 1) == Some(&'*') => {
+                        st = St::Block;
+                        i += 2;
+                        continue;
+                    }
+                    '#' if c.get(i + 1) != Some(&'[') => st = St::Line,
+                    '<' if at(i, "<<<") => {
+                        let mut j = i + 3;
+                        while j < n && (c[j] == ' ' || c[j] == '\t') {
+                            j += 1;
+                        }
+                        if j < n && (c[j] == '\'' || c[j] == '"') {
+                            j += 1;
+                        }
+                        let s0 = j;
+                        while j < n && ident(c[j]) {
+                            j += 1;
+                        }
+                        let id: String = c[s0..j].iter().collect();
+                        out.extend(&c[i..j]);
+                        i = j;
+                        if !id.is_empty() {
+                            st = St::Heredoc(id);
+                        }
+                        continue;
+                    }
+                    _ => out.push(ch),
+                }
+            }
+            St::Quote(q) => {
+                out.push(ch);
+                if ch == '\\' && i + 1 < n {
+                    out.push(c[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                if ch == *q {
+                    st = St::Code;
+                }
+            }
+            St::Line => {
+                if ch == '\n' {
+                    out.push('\n');
+                    st = St::Code;
+                } else if at(i, "?>") {
+                    st = St::Code; // `?>` ends a line comment; handled by Code next round
+                    continue;
+                }
+            }
+            St::Block => {
+                if at(i, "*/") {
+                    st = St::Code;
+                    i += 2;
+                    continue;
+                }
+                if ch == '\n' {
+                    out.push('\n');
+                }
+            }
+            St::Heredoc(id) => {
+                out.push(ch);
+                if ch == '\n' {
+                    // The closing marker may be indented (PHP 7.3+).
+                    let mut j = i + 1;
+                    while j < n && (c[j] == ' ' || c[j] == '\t') {
+                        j += 1;
+                    }
+                    if at(j, id) && !c.get(j + id.chars().count()).map_or(false, |&x| ident(x)) {
+                        st = St::Code;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Downgrade errors in code that only runs when the old feature exists, e.g. code inside
@@ -454,6 +598,7 @@ fn walk(lines: &[String], i: usize, pos: usize, target: usize) -> Walk {
 /// Like `apply_guards`, for the given severities (the scan pipeline uses errors and warnings).
 pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], severities: &[&str]) {
     let version_guard = Regex::new(r"(?i)((php_version_id|php_major_version|libxml_version)\s*([<>]=?|===?)|version_compare\s*\(\s*(php_version|phpversion\s*\(\s*\)))").unwrap();
+    let dyn_exists = Regex::new(r"(!\s*)?\\?function_exists\s*\(\s*\$(?:this->)?([a-z0-9_]+)\s*\)").unwrap();
     let mut cache: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for f in findings.iter_mut().filter(|f| severities.contains(&f.severity.as_str())) {
         let lines = cache.entry(f.file.clone()).or_insert_with(|| {
@@ -470,12 +615,15 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
         // do not skip code that uses it: for warnings only PHP version checks count as guards.
         let ident = if f.severity == "error" { rule_ident(&f.rule_id) } else { None };
         let ident_re = ident.as_ref().map(|id| {
+            let id = regex::escape(id);
             Regex::new(&format!(
-                r#"(!\s*)?\\?(function_exists|extension_loaded|defined|is_callable|class_exists)\s*\(\s*['"]\\?(?:[a-z0-9_]+\\{{1,2}})*{}"#,
-                regex::escape(id)
+                r#"(!\s*)?\\?(function_exists|extension_loaded|defined|is_callable|class_exists|interface_exists|enum_exists)\s*\(\s*(?:['"]\\?(?:[a-z0-9_]+\\{{1,2}})*{id}|\\?(?:[a-z0-9_]+\\)*{id}::class\b)"#
             ))
             .unwrap()
         });
+        // Newer PHP features (NewClasses, NewFunctions...) are missing on the target; code that only
+        // runs on a PHP version above every checked target never runs there.
+        let new_feature = f.rule_id.contains(".New");
         let mut guarded = false;
 
         // Short-circuit on the finding line: `!function_exists('x') || ... x(...)`.
@@ -502,9 +650,13 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
                 }
             }
             let mut ver: Option<(usize, VerDir)> = None;
+            let mut new_only: Option<usize> = None;
             if pos_end.is_none() {
                 if let Some(m) = version_guard.find(line) {
                     let negated = line[..m.start()].trim_end_matches(|c: char| c.is_whitespace() || c == '(').ends_with('!');
+                    if new_feature && !negated && new_php_floor(&line[m.start()..]).map_or(false, |n| n > MIN_TARGET_ID) {
+                        new_only = Some(m.end());
+                    }
                     if let Some(d) = version_dir(&line[m.start()..]) {
                         let d = if negated {
                             if d == VerDir::Old { VerDir::New } else { VerDir::Old }
@@ -516,7 +668,7 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
                 }
             }
             let distance = target - i;
-            if let Some(pos) = pos_end.or(match ver {
+            if let Some(pos) = pos_end.or(new_only).or(match ver {
                 Some((p, VerDir::Old)) => Some(p),
                 _ => None,
             }) {
@@ -564,6 +716,19 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
                 if (else_ok && w.region == Region::InElse) || (w.early_exit && w.region == (Region::After { scope_ok: true })) {
                     guarded = true;
                 }
+                continue;
+            }
+            // `if (function_exists($this->fn)) return;` where `$fn` defaults to a function that
+            // always exists (php-markdown's `utf8_strlen = 'mb_strlen'`): the rest never runs.
+            if f.severity == "error" && i != target {
+                if let Some(c) = dyn_exists.captures(line) {
+                    if c.get(1).is_none() && always_exists_default(lines, &c[2]) {
+                        let w = walk(lines, i, c.get(0).unwrap().end(), target);
+                        if w.early_exit && w.region == (Region::After { scope_ok: true }) {
+                            guarded = true;
+                        }
+                    }
+                }
             }
         }
         // Newer PHP features (NewConstants, NewFunctions, NewClasses...) with positive feature
@@ -577,14 +742,66 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
         if guarded {
             f.severity = "info".into();
             f.confidence = "low".into();
-            f.message = format!("Guarded (only runs when the old feature is available, so it is skipped on newer PHP): {}", f.message);
+            f.message = if new_feature {
+                format!("Guarded (only runs when PHP already has this feature, so it is skipped where it is missing): {}", f.message)
+            } else {
+                format!("Guarded (only runs when the old feature is available, so it is skipped on newer PHP): {}", f.message)
+            };
         }
     }
+}
+
+/// Functions that exist on every PHP 8 site running WordPress (WordPress core polyfills
+/// `mb_strlen`/`mb_substr` in wp-includes/compat.php).
+const ALWAYS_EXISTS: &[&str] = &["mb_strlen", "mb_substr", "strlen", "substr", "strtolower", "strtoupper"];
+
+/// True when the variable or property `name` is initialised in the file (lower-case lines) with the
+/// name of a function that always exists, e.g. `public $utf8_strlen = 'mb_strlen';`.
+fn always_exists_default(lines: &[String], name: &str) -> bool {
+    let re = Regex::new(&format!(r#"\${}\s*=\s*['"]([a-z0-9_]+)['"]"#, regex::escape(name))).unwrap();
+    let mut seen = false;
+    for l in lines {
+        for c in re.captures_iter(l) {
+            if !ALWAYS_EXISTS.contains(&&c[1]) {
+                return false; // assigned another function somewhere: not provably always there
+            }
+            seen = true;
+        }
+    }
+    seen
 }
 
 /// Direction of a PHP version check that starts at `expr` (lower-case source), or None when it
 /// is unknown or its old-PHP side could include a checked target version.
 fn version_dir(expr: &str) -> Option<VerDir> {
+    let (op, id, min) = version_check(expr)?;
+    // The old side must lie entirely below the lowest checked target.
+    match op.as_str() {
+        "<" if id <= min => Some(VerDir::Old),
+        "<=" if id < min => Some(VerDir::Old),
+        ">=" if id <= min => Some(VerDir::New),
+        ">" if id < min => Some(VerDir::New),
+        _ => None,
+    }
+}
+
+/// For a check that selects new PHP (`PHP_VERSION_ID >= 80600`, `version_compare(PHP_VERSION,
+/// '8.6', '>=')`), the lowest PHP version id on its new side.
+fn new_php_floor(expr: &str) -> Option<u64> {
+    let (op, id, min) = version_check(expr)?;
+    if min != MIN_TARGET_ID {
+        return None; // libxml checks say nothing about the PHP version
+    }
+    match op.as_str() {
+        ">=" => Some(id),
+        ">" => Some(id + 1),
+        _ => None,
+    }
+}
+
+/// Parse a PHP version check at the start of `expr`: (operator on the version id, version id,
+/// lowest checked id for that kind of check).
+fn version_check(expr: &str) -> Option<(String, u64, u64)> {
     let e = expr.to_lowercase();
     // (old side is `<` / `<=`, the compared version id)
     let (op, id, min): (String, u64, u64);
@@ -647,14 +864,7 @@ fn version_dir(expr: &str) -> Option<VerDir> {
     } else {
         return None;
     }
-    // The old side must lie entirely below the lowest checked target.
-    match op.as_str() {
-        "<" if id <= min => Some(VerDir::Old),
-        "<=" if id < min => Some(VerDir::Old),
-        ">=" if id <= min => Some(VerDir::New),
-        ">" if id < min => Some(VerDir::New),
-        _ => None,
-    }
+    Some((op, id, min))
 }
 
 /// Old extensions removed from PHP long ago, and the modern alternatives code switches to.
@@ -708,6 +918,78 @@ pub fn apply_fallbacks(root: &Path, findings: &mut [crate::model::Finding]) {
     }
 }
 
+/// Findings that depend on what the rest of the package does:
+///  - `RemovedCallingDestructAfterConstructorExit`: only matters when a destructor exists; with
+///    no `function __destruct` anywhere in the package it becomes info.
+///  - `$HTTP_RAW_POST_DATA` in a file that assigns the variable itself (usually from
+///    `php://input`) becomes info: the code never relies on PHP filling it.
+///  - `NewFunctions.X` when the package declares its own global `X()` (a polyfill such as
+///    symfony/polyfill-php85) or the file imports a namespaced `X` with `use function`: the call
+///    works on every PHP version, so it becomes info.
+pub fn apply_package_context(root: &Path, findings: &mut [crate::model::Finding]) {
+    let destruct = Regex::new(r"(?i)\bfunction\s+&?\s*__destruct\s*\(").unwrap();
+    let raw_assign = Regex::new(r"(?i)\$http_raw_post_data\s*=[^=]").unwrap();
+    let mut package: Option<Vec<(String, String)>> = None;
+    let mut files: BTreeMap<String, String> = BTreeMap::new();
+    let load = |root: &Path| -> Vec<(String, String)> {
+        WalkDir::new(root)
+            .sort_by_file_name()
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |x| x == "php" || x == "inc"))
+            .filter_map(|e| std::fs::read_to_string(e.path()).ok().map(|t| (rel(root, e.path()), strip_comments(&t))))
+            .collect()
+    };
+    let mut globals: Option<std::collections::BTreeSet<String>> = None;
+    for f in findings.iter_mut().filter(|f| f.severity == "error" || f.severity == "warning") {
+        let why: Option<String> = if f.rule_id.contains("RemovedCallingDestructAfterConstructorExit") {
+            let pkg = package.get_or_insert_with(|| load(root));
+            (!pkg.iter().any(|(_, t)| destruct.is_match(t))).then(|| "no class in this package has a __destruct() method, so nothing changes".to_string())
+        } else if f.rule_id.contains("RemovedPredefinedGlobalVariables.http_raw_post_data") {
+            let t = files.entry(f.file.clone()).or_insert_with(|| strip_comments(&std::fs::read_to_string(root.join(&f.file)).unwrap_or_default()));
+            raw_assign.is_match(t).then(|| "this file sets $HTTP_RAW_POST_DATA itself, so it does not rely on PHP to fill it".to_string())
+        } else if f.rule_id.contains(".NewFunctions.") {
+            match rule_ident(&f.rule_id) {
+                Some(name) => {
+                    let t = files.entry(f.file.clone()).or_insert_with(|| strip_comments(&std::fs::read_to_string(root.join(&f.file)).unwrap_or_default()));
+                    let imported = imports_function(t, &name);
+                    let own = imported
+                        || globals
+                            .get_or_insert_with(|| {
+                                let pkg = package.get_or_insert_with(|| load(root));
+                                global_functions(pkg)
+                            })
+                            .contains(&name);
+                    own.then(|| format!("this package ships its own {name}(), so the call works on every PHP version"))
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            f.severity = "info".into();
+            f.confidence = "low".into();
+            f.message = format!("{} ({why})", f.message);
+        }
+    }
+}
+
+/// Lower-case names of functions declared in the global namespace: files with no `namespace`
+/// and no class/interface/trait/enum declaration (polyfill bootstrap files, function libraries).
+fn global_functions(pkg: &[(String, String)]) -> std::collections::BTreeSet<String> {
+    let ns = Regex::new(r"(?mi)^\s*namespace\s+[A-Za-z0-9_\\]+\s*[;{]").unwrap();
+    let ty = Regex::new(r"(?mi)^\s*(abstract\s+|final\s+|readonly\s+)*(class|interface|trait|enum)\s+[A-Za-z_]").unwrap();
+    let func = Regex::new(r"(?i)\bfunction\s+&?\s*([a-z0-9_]+)\s*\(").unwrap();
+    let mut out = std::collections::BTreeSet::new();
+    for (_, t) in pkg.iter().filter(|(_, t)| !ns.is_match(t) && !ty.is_match(t)) {
+        for c in func.captures_iter(t) {
+            out.insert(c[1].to_lowercase());
+        }
+    }
+    out
+}
+
 #[derive(Deserialize)]
 struct Suppression {
     /// Exact rule ID, or a prefix ending in `*` (e.g. "PHPCompatibility.IniDirectives.RemovedIniDirectives.*").
@@ -755,45 +1037,359 @@ pub fn apply_suppressions(rules_dir: &Path, findings: &mut Vec<crate::model::Fin
 }
 
 /// Matches the underlying rule set reports that are wrong for the code they point at:
-///  - `ForbiddenBreakContinueOutsideLoop` when the line (or the line before) opens a braceless
-///    loop body: `for (...) if (...) { break; }` is inside the loop.
+///  - `ForbiddenBreakContinueOutsideLoop` when the statement sits in a braceless loop body, also
+///    through nested braceless `if`/`else`/`try` heads on earlier lines (`foreach (...)` newline
+///    `if (...) { ...; break; }`, `while (true) try { ... continue; }`).
 ///  - `RemovedFunctions.X` where X is a function declared in the file's own namespace somewhere in
-///    the package (e.g. `GuzzleHttp\Promise\each()`): the call resolves to that function.
+///    the package (e.g. `GuzzleHttp\Promise\each()`), or imported with `use function Ns\X;`: the
+///    call resolves to that function.
+///  - `ForbiddenThisUseContexts.Global` on `global ${$this->name}` (a dynamic variable name).
+///  - `InternalInterfaces.datetimeinterfaceFound` on an interface that extends DateTimeInterface.
+///  - `define()` with a third argument that is literally `false` (PHP 8 only rejects `true`).
+/// It also lowers to info:
+///  - `define()` whose third argument is a variable passed through (e.g. a wrapper function);
+///  - `RemovedTernaryAssociativity` inside a `match` expression: such a file only compiles on
+///    PHP 8, where a real unparenthesised nested ternary is a compile error, so the upgrade
+///    changes nothing (the rule misreads parenthesised ternaries in match arms).
 pub fn drop_rule_misreads(root: &Path, findings: &mut Vec<crate::model::Finding>) {
-    let loop_re = Regex::new(r"\b(for|foreach|while)\s*\(").unwrap();
-    let loop_head = Regex::new(r"^\s*(for|foreach|while)\s*\(.*\)\s*$").unwrap();
     let ns_re = Regex::new(r"(?m)^\s*namespace\s+([A-Za-z0-9_\\]+)\s*[;{]").unwrap();
     let fn_re = Regex::new(r"(?m)^\s*function\s+&?\s*([A-Za-z0-9_]+)\s*\(").unwrap();
+    let global_re = Regex::new(r"(?i)\bglobal\s+([^;]*)").unwrap();
+    let dyn_var = Regex::new(r"\$\{[^}]*\}").unwrap();
+    let this_re = Regex::new(r"(?i)\$this\b").unwrap();
+    let iface_re = Regex::new(r"(?i)\binterface\s+[a-z0-9_]+[^{;]*\bextends\b").unwrap();
+    let decl_re = Regex::new(r"(?i)\b(class|interface|trait|enum)\s+[a-z0-9_]").unwrap();
     let mut files: BTreeMap<String, String> = BTreeMap::new();
     let mut ns_functions: Option<BTreeMap<String, std::collections::BTreeSet<String>>> = None;
     let mut text = |file: &str| -> String {
         files.entry(file.to_string()).or_insert_with(|| strip_comments(&std::fs::read_to_string(root.join(file)).unwrap_or_default())).clone()
     };
-    findings.retain(|f| {
-        if f.rule_id.contains("ForbiddenBreakContinueOutsideLoop") && f.line > 0 {
+    let mut decide = |f: &crate::model::Finding| -> Misread {
+        use Misread::*;
+        if f.line == 0 {
+            return Keep;
+        }
+        let i = f.line as usize - 1;
+        if f.rule_id.contains("ForbiddenBreakContinueOutsideLoop") {
             let t = text(&f.file);
-            let lines: Vec<&str> = t.lines().collect();
-            let i = f.line as usize - 1;
-            if let Some(l) = lines.get(i) {
-                let kw = l.find("break").into_iter().chain(l.find("continue")).min();
-                let same_line = loop_re.find(l).map_or(false, |m| kw.map_or(true, |k| m.start() < k));
-                let prev_line = i > 0 && lines.get(i - 1).map_or(false, |p| loop_head.is_match(p));
-                if same_line || prev_line {
-                    return false;
-                }
-            }
-            return true;
+            let Some((off, l)) = line_at(&t, i) else { return Keep };
+            let lw = l.to_lowercase();
+            let Some(kw) = [lw.find("break"), lw.find("continue")].into_iter().flatten().min() else { return Keep };
+            return if in_loop_body(t.as_bytes(), off + kw) { Drop } else { Keep };
         }
         if f.rule_id.contains(".RemovedFunctions.") {
-            let Some(name) = rule_ident(&f.rule_id) else { return true };
+            let Some(name) = rule_ident(&f.rule_id) else { return Keep };
             let t = text(&f.file);
-            let Some(ns) = ns_re.captures(&t).map(|c| c[1].to_lowercase()) else { return true };
+            if imports_function(&t, &name) {
+                return Drop;
+            }
+            let Some(ns) = ns_re.captures(&t).map(|c| c[1].to_lowercase()) else { return Keep };
             let decls = ns_functions.get_or_insert_with(|| namespaced_functions(root, &ns_re, &fn_re));
-            return !decls.get(&ns).map_or(false, |s| s.contains(&name));
+            return if decls.get(&ns).map_or(false, |s| s.contains(&name)) { Drop } else { Keep };
         }
-        true
+        if f.rule_id.contains("ForbiddenThisUseContexts.Global") {
+            let t = text(&f.file);
+            let Some((_, l)) = line_at(&t, i) else { return Keep };
+            if let Some(c) = global_re.captures(l) {
+                let names = dyn_var.replace_all(&c[1], "");
+                if c[1].contains("${") && !this_re.is_match(&names) {
+                    return Drop;
+                }
+            }
+            return Keep;
+        }
+        if f.rule_id.contains("InternalInterfaces.datetimeinterfaceFound") {
+            let t = text(&f.file);
+            let lines: Vec<&str> = t.lines().collect();
+            let Some(l) = lines.get(i) else { return Keep };
+            if iface_re.is_match(l) {
+                return Drop;
+            }
+            // Multi-line declaration: the `extends` line has no class/interface keyword itself.
+            if !decl_re.is_match(l) {
+                let from = i.saturating_sub(2);
+                let head = lines[from..=i].join(" ");
+                if iface_re.is_match(&head) && !Regex::new(r"(?i)\bclass\s").unwrap().is_match(&head) {
+                    return Drop;
+                }
+            }
+            return Keep;
+        }
+        if f.rule_id.contains("define_case_insensitive") {
+            let t = text(&f.file);
+            let Some((_, l)) = line_at(&t, i) else { return Keep };
+            match define_third_arg(l).map(|a| a.to_lowercase()) {
+                Some(a) if a == "false" || a == "\\false" => return Drop,
+                Some(a) if a.starts_with('$') => return Info("the third argument is passed through from a variable; PHP 8 only rejects the value true"),
+                _ => {}
+            }
+            return Keep;
+        }
+        if f.rule_id.contains("RemovedTernaryAssociativity") {
+            let t = text(&f.file);
+            if let Some((off, _)) = line_at(&t, i) {
+                if in_match_block(t.as_bytes(), off) {
+                    return Info("inside a match expression, so this file already compiles only on PHP 8, where an unparenthesised nested ternary is a compile error; the rule misreads parenthesised ternaries here");
+                }
+            }
+        }
+        Keep
+    };
+    let decisions: Vec<Misread> = findings.iter().map(&mut decide).collect();
+    let mut it = decisions.into_iter();
+    findings.retain_mut(|f| match it.next() {
+        Some(Misread::Drop) => false,
+        Some(Misread::Info(why)) => {
+            if f.severity == "error" || f.severity == "warning" {
+                f.severity = "info".into();
+                f.confidence = "low".into();
+                f.message = format!("{} ({why})", f.message);
+            }
+            true
+        }
+        _ => true,
     });
 }
+
+enum Misread {
+    Keep,
+    Drop,
+    Info(&'static str),
+}
+
+/// Byte offset and text of 0-based line `i`.
+fn line_at(t: &str, i: usize) -> Option<(usize, &str)> {
+    let mut off = 0;
+    for (k, l) in t.split('\n').enumerate() {
+        if k == i {
+            return Some((off, l));
+        }
+        off += l.len() + 1;
+    }
+    None
+}
+
+/// `use function A\B\name;` (or a group import containing `name`) without an `as` alias.
+fn imports_function(text: &str, name: &str) -> bool {
+    Regex::new(&format!(r"(?i)\buse\s+function\s+[^;]*[\\{{,]\s*{}\s*[,;}}]", regex::escape(name))).unwrap().is_match(text)
+}
+
+/// Third argument of the first `define(` call on the line, trimmed.
+fn define_third_arg(line: &str) -> Option<String> {
+    let m = Regex::new(r"(?i)\bdefine\s*\(").unwrap().find(line)?;
+    let mut args = vec![String::new()];
+    let (mut depth, mut quote) = (0i32, None::<char>);
+    let mut prev = ' ';
+    for ch in line[m.end()..].chars() {
+        match quote {
+            Some(q) => {
+                if ch == q && prev != '\\' {
+                    quote = None;
+                }
+                args.last_mut()?.push(ch);
+            }
+            None => match ch {
+                '\'' | '"' => {
+                    quote = Some(ch);
+                    args.last_mut()?.push(ch);
+                }
+                '(' | '[' => {
+                    depth += 1;
+                    args.last_mut()?.push(ch);
+                }
+                ')' | ']' if depth == 0 => break,
+                ')' | ']' => {
+                    depth -= 1;
+                    args.last_mut()?.push(ch);
+                }
+                ',' if depth == 0 => args.push(String::new()),
+                _ => args.last_mut()?.push(ch),
+            },
+        }
+        prev = ch;
+    }
+    args.get(2).map(|a| a.trim().to_string())
+}
+
+fn skip_ws_back(t: &[u8], mut i: usize) -> usize {
+    while i > 0 && t[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    i
+}
+
+/// The word ending at `end` (exclusive), lower-case, and its start.
+fn word_before(t: &[u8], end: usize) -> (usize, String) {
+    let mut s = end;
+    while s > 0 && (t[s - 1].is_ascii_alphanumeric() || t[s - 1] == b'_') {
+        s -= 1;
+    }
+    (s, String::from_utf8_lossy(&t[s..end]).to_lowercase())
+}
+
+/// Index of the opening bracket matching the closing one at `close`.
+fn match_back(t: &[u8], close: usize, open_c: u8, close_c: u8) -> Option<usize> {
+    let mut depth = 0i64;
+    let mut i = close + 1;
+    let floor = close.saturating_sub(20_000);
+    while i > floor {
+        i -= 1;
+        if t[i] == close_c {
+            depth += 1;
+        } else if t[i] == open_c {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// Start of the `if` that begins the chain ending in the `else`/`elseif`/`catch`/`finally`
+/// keyword at `kw` (or of the `try` for `catch`/`finally`).
+fn chain_start(t: &[u8], mut kw: usize) -> Option<usize> {
+    for _ in 0..64 {
+        let e = skip_ws_back(t, kw);
+        if e == 0 || t[e - 1] != b'}' {
+            return None; // braceless body before `else`: not followed
+        }
+        let o = match_back(t, e - 1, b'{', b'}')?;
+        let e2 = skip_ws_back(t, o);
+        if e2 == 0 {
+            return None;
+        }
+        let (ws, w) = if t[e2 - 1] == b')' { word_before(t, skip_ws_back(t, match_back(t, e2 - 1, b'(', b')')?)) } else { word_before(t, e2) };
+        match w.as_str() {
+            "if" | "try" => return Some(ws),
+            "elseif" | "catch" | "else" | "finally" => kw = ws,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// True when the statement starting at byte `pos` (a `break`/`continue`) is inside a loop
+/// (or `switch`), following braceless loop bodies and nested braceless heads backwards.
+fn in_loop_body(t: &[u8], mut pos: usize) -> bool {
+    for _ in 0..256 {
+        let e = skip_ws_back(t, pos);
+        if e == 0 {
+            return false;
+        }
+        match t[e - 1] {
+            b')' => {
+                let Some(o) = match_back(t, e - 1, b'(', b')') else { return false };
+                let (ws, w) = word_before(t, skip_ws_back(t, o));
+                match w.as_str() {
+                    "for" | "foreach" | "while" => return true,
+                    "if" => pos = ws,
+                    "elseif" => match chain_start(t, ws) {
+                        Some(p) => pos = p,
+                        None => return false,
+                    },
+                    _ => return false,
+                }
+            }
+            b'{' => {
+                let e2 = skip_ws_back(t, e - 1);
+                if e2 == 0 {
+                    return false;
+                }
+                if t[e2 - 1] == b')' {
+                    let Some(o) = match_back(t, e2 - 1, b'(', b')') else { return false };
+                    let (ws, w) = word_before(t, skip_ws_back(t, o));
+                    match w.as_str() {
+                        "for" | "foreach" | "while" | "switch" => return true,
+                        "if" => pos = ws,
+                        "elseif" | "catch" => match chain_start(t, ws) {
+                            Some(p) => pos = p,
+                            None => return false,
+                        },
+                        _ => return false,
+                    }
+                } else {
+                    let (ws, w) = word_before(t, e2);
+                    match w.as_str() {
+                        "do" => return true,
+                        "try" => pos = ws,
+                        "else" | "finally" => match chain_start(t, ws) {
+                            Some(p) => pos = p,
+                            None => return false,
+                        },
+                        _ => return false,
+                    }
+                }
+            }
+            b';' | b'}' | b':' => {
+                // A sibling statement: move out to the enclosing block's `{`.
+                let mut depth = 0i64;
+                let mut i = e;
+                let floor = e.saturating_sub(20_000);
+                let mut found = None;
+                while i > floor {
+                    i -= 1;
+                    match t[i] {
+                        b'}' => depth += 1,
+                        b'{' if depth == 0 => {
+                            found = Some(i);
+                            break;
+                        }
+                        b'{' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                match found {
+                    Some(o) => pos = o + 1,
+                    None => return false,
+                }
+            }
+            _ => {
+                let (ws, w) = word_before(t, e);
+                match w.as_str() {
+                    "do" => return true,
+                    "try" => pos = ws,
+                    "else" => match chain_start(t, ws) {
+                        Some(p) => pos = p,
+                        None => return false,
+                    },
+                    _ => return false,
+                }
+            }
+        }
+    }
+    false
+}
+
+/// True when byte `pos` lies inside the `{ }` body of a `match (...)` expression.
+fn in_match_block(t: &[u8], pos: usize) -> bool {
+    let mut depth = 0i64;
+    let mut i = pos;
+    let floor = pos.saturating_sub(20_000);
+    while i > floor {
+        i -= 1;
+        match t[i] {
+            b'}' => depth += 1,
+            b'{' if depth > 0 => depth -= 1,
+            b'{' => {
+                let e = skip_ws_back(t, i);
+                if e > 0 && t[e - 1] == b')' {
+                    if let Some(o) = match_back(t, e - 1, b'(', b')') {
+                        let (ws, w) = word_before(t, skip_ws_back(t, o));
+                        let before = skip_ws_back(t, ws);
+                        let member = before >= 2 && (&t[before - 2..before] == b"->" || &t[before - 2..before] == b"::");
+                        if w == "match" && !member {
+                            return true;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 
 /// Functions declared at namespace level in the package's PHP files, by lower-case namespace.
 fn namespaced_functions(root: &Path, ns_re: &Regex, fn_re: &Regex) -> BTreeMap<String, std::collections::BTreeSet<String>> {
@@ -964,13 +1560,22 @@ pub fn post_process(root: &Path, rules_dir: &Path, findings: &mut Vec<crate::mod
     apply_guards_to(root, findings, &["error", "warning"]);
     apply_version_selected_files(root, findings);
     apply_fallbacks(root, findings);
+    apply_package_context(root, findings);
     apply_wp_polyfills(root, rules_dir, findings);
     pair_extension_findings(findings);
 }
 
-/// Name a component is known by across detectors: `guzzlehttp/guzzle` -> `guzzle`.
+/// Composer package names whose signature rule uses a different name.
+const COMPONENT_ALIASES: &[(&str, &str)] = &[("google/apiclient", "google-api-client")];
+
+/// Name a component is known by across detectors: `guzzlehttp/guzzle` -> `guzzle`,
+/// `google/apiclient` -> `google-api-client`.
 fn component_key(name: &str) -> String {
-    name.rsplit('/').next().unwrap_or(name).to_lowercase()
+    let lower = name.to_lowercase();
+    if let Some((_, alias)) = COMPONENT_ALIASES.iter().find(|(c, _)| *c == lower) {
+        return alias.to_string();
+    }
+    lower.rsplit('/').next().unwrap_or(&lower).to_string()
 }
 
 /// One entry per library copy:

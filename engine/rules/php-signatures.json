@@ -348,5 +348,24 @@
     "verified_in": [
       "wp-less@1.9.8 (vendor/oyejorge/less.php/lib/Less/Version.php, 1.7.0.13; vendor/wikimedia/less.php/lib/Less/Version.php, 3.2.1)"
     ]
+  },
+  {
+    "name": "requests",
+    "match_file_regex": "(^|/)[Rr]equests[^/]*/(library|src)/Requests\\.php$",
+    "version_regex": "const\\s+VERSION\\s*=\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "rmccue/requests (WpOrg\\Requests), the HTTP library WordPress core also uses. Only copies in a folder named Requests* or requests (composer) match. 1.x: library/Requests.php; 2.x: src/Requests.php (library/Requests.php is a deprecated shim without a version). Requests 1.8.0 still says VERSION = '1.7'.",
+    "verified_in": [
+      "woo-razorpay@4.8.9 (razorpay-sdk/libs/Requests-1.6.1/library/Requests.php, 1.6.1; Requests-1.8.0, 1.7; Requests-2.0.4/src/Requests.php, 2.0.4)"
+    ]
+  },
+  {
+    "name": "aws-sdk-php",
+    "match_file_regex": "(^|/)sdk\\.class\\.php$",
+    "version_regex": "define\\s*\\(\\s*['\\\"]CFRUNTIME_VERSION['\\\"]\\s*,\\s*['\\\"](\\d[0-9A-Za-z.\\-]*)['\\\"]",
+    "notes": "AWS SDK for PHP 1.x (CloudFusion runtime, 2012; includes RequestCore). Very old, PHP 8 risk. The component path is the SDK root, so lib/requestcore/ is attributed to it.",
+    "verified_in": [
+      "iwp-client@1.13.10 (lib/amazon_s3_bwd_comp/sdk.class.php, 1.5.14)",
+      "w3-total-cache@2.11.0 (lib/SNS/sdk.class.php)"
+    ]
   }
 ]

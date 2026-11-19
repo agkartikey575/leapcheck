@@ -1,0 +1,9 @@
+[
+  {
+    "package": "w3-total-cache",
+    "rule_id": "PHPCompatibility.ParameterValues.RemovedImplodeFlexibleParamOrder.Removed",
+    "path_regex": "(^|/)lib/Google/Http/REST\\.php$",
+    "reason": "the bundled Google API client's REST class is used by the plugin's Google Drive CDN engine, so the reversed implode() arguments run on newer PHP",
+    "verified_in": ["w3-total-cache@2.11.0 (lib/Google/Http/REST.php:129, checked by hand 2026-11-18)"]
+  }
+]

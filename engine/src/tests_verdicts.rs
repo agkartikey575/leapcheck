@@ -242,7 +242,8 @@ fn suppression_removes_carbon_datetimeinterface_case_only() {
     detect::apply_suppressions(&rules_dir(), &mut fs);
     assert_eq!(fs.len(), 2);
     assert!(fs.iter().all(|f| !(f.rule_id == CARBON_RULE && f.file.ends_with("CarbonInterface.php"))));
-    assert!(fs.iter().any(|f| f.rule_id == CARBON_RULE && f.file == "includes/class-my-date.php" && f.severity == "error"));
+    // Other DateTimeInterface findings are an existing PHP 5.5 restriction, not an upgrade change (N6).
+    assert!(fs.iter().any(|f| f.rule_id == CARBON_RULE && f.file == "includes/class-my-date.php" && f.severity == "info"));
     assert!(fs.iter().any(|f| f.rule_id == CREATE_FUNCTION && f.severity == "error"));
 }
 
@@ -395,7 +396,7 @@ fn verdicts(per_target: &[(String, Vec<Finding>)], encoded: u32) -> Vec<(String,
     let db = fx.path().join("t.sqlite");
     let conn = crate::db::open(db.to_str().unwrap()).unwrap();
     let run = crate::trace::Run::start(&conn, "test", serde_json::json!({})).unwrap();
-    crate::store(&conn, &run.id, "wordpress-plugin", "fixture", "1.0", &[], &[], per_target, encoded).unwrap();
+    crate::store(&conn, &run.id, "wordpress-plugin", "fixture", "1.0", &[], &[], per_target, encoded, &|_| false).unwrap();
     let mut stmt = conn.prepare("SELECT target, verdict, errors, warnings FROM result ORDER BY target").unwrap();
     let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
     rows.map(|r| r.unwrap()).collect()
@@ -869,7 +870,8 @@ fn f9_rules_that_do_not_break_on_upgrade() {
     assert!(fs.iter().all(|f| f.severity != "error"), "{got:?}");
     let s = |r: &str| fs.iter().find(|f| f.rule_id.contains(r)).unwrap().severity.as_str();
     assert_eq!(s("RemovedIniDirectives"), "warning");
-    assert_eq!(s("RemovedPredefinedGlobalVariables"), "warning");
+    // The file assigns $HTTP_RAW_POST_DATA itself (N14), so it does not rely on PHP filling it.
+    assert_eq!(s("RemovedPredefinedGlobalVariables"), "info");
     assert_eq!(s("ForbiddenStripTags"), "info");
     assert_eq!(s("NewUniformVariableSyntax"), "info");
     assert_eq!(s("ChangedIntToBool"), "info");
@@ -1034,4 +1036,364 @@ fn feature_checks_do_not_guard_deprecation_warnings() {
     let mut fs = vec![pf("Constants.RemovedConstants.mysqli_store_result_copy_dataDeprecated", "warning", "a.php", 3)];
     full(fx.path(), &mut fs);
     assert_eq!(fs[0].severity, "warning");
+}
+
+// ---------- ACC-1b fixtures (each one our own minimal code) ----------
+
+const BREAK_OUTSIDE: &str = "ControlStructures.ForbiddenBreakContinueOutsideLoop.FatalError";
+
+#[test]
+fn n1_polyfill_stub_files_are_info() {
+    let engine = "<?php\nnamespace Random;\nif (\\PHP_VERSION_ID < 80200) {\n    interface Engine { public function generate(): string; }\n}\n";
+    let duration = "<?php\nnamespace Time;\nif (\\PHP_VERSION_ID < 80600) {\n    final class Duration {\n        public static function ofSeconds(int $s): Duration { return new Duration(); }\n    }\n}\n";
+    let e = "vendor/symfony/polyfill-php82/Resources/stubs/Random/Engine.php";
+    let d = "vendor/symfony/polyfill-time/Resources/stubs/Time/Duration.php";
+    let b = "vendor/symfony/polyfill-php85/bootstrap.php";
+    let m = "modules/Symfony/Polyfill/Php82/Resources/stubs/Random/Engine.php";
+    let fx = Fixture::new("n1").file(e, engine).file(d, duration).file(b, "<?php\nfunction array_first(array $a) { return 1; }\n").file(m, engine);
+    let mut fs = vec![
+        pf("Namespaces.ReservedNames.randomFound", "error", e, 2),
+        pf("Classes.NewClasses.time_durationFound", "error", d, 5),
+        pf("Classes.NewClasses.x_Found", "error", b, 2),
+        pf("Namespaces.ReservedNames.randomFound", "error", m, 2),
+    ];
+    full(fx.path(), &mut fs);
+    assert!(fs.iter().all(|f| f.severity == "info"), "{:?}", sev(&fs));
+    assert_eq!(verdict_of(&fs), "compatible");
+}
+
+#[test]
+fn n1_new_class_behind_new_php_check_is_guarded() {
+    // Guzzle-style: the class is only used when PHP 8.6+ has it.
+    let src = "<?php\nfinal class H {\n    private static function hasStreamError(): bool\n    {\n        return \\PHP_VERSION_ID >= 80600 && \\class_exists(\\StreamError::class, false);\n    }\n    function a() {\n        if (\\PHP_VERSION_ID >= 80600) {\n            $e = new \\Uri\\Rfc3986\\Uri('x');\n        }\n    }\n    function b() {\n        $e = new \\Uri\\Rfc3986\\Uri('x');\n    }\n}\n";
+    let fx = Fixture::new("n1b").file("StreamHandler.php", src);
+    let mut fs = vec![
+        pf("Classes.NewClasses.streamerrorFound", "error", "StreamHandler.php", 5),
+        pf("Classes.NewClasses.uri_rfc3986_uriFound", "error", "StreamHandler.php", 9),
+        pf("Classes.NewClasses.uri_rfc3986_uriFound", "error", "StreamHandler.php", 13),
+    ];
+    full(fx.path(), &mut fs);
+    assert_eq!(sev(&fs).iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>(), vec!["info", "info", "error"], "{:?}", sev(&fs));
+    // A check that also allows the target version (>= 8.0) does not guard a newer feature.
+    let fx2 = Fixture::new("n1c").file("a.php", "<?php\nif (PHP_VERSION_ID >= 80000) {\n    $d = new \\Uri\\Rfc3986\\Uri('x');\n}\n");
+    let mut fs2 = vec![pf("Classes.NewClasses.uri_rfc3986_uriFound", "error", "a.php", 3)];
+    full(fx2.path(), &mut fs2);
+    assert_eq!(fs2[0].severity, "error");
+}
+
+#[test]
+fn n2_hex_string_literals_are_info() {
+    let src = "<?php\n$color = \"0x142864\";\n$rgb = hexdec($color);\n$patterns = array('\\(0x', '0x3c62723e', '0x00');\n";
+    let fx = Fixture::new("n2").file("plugin.php", src);
+    let r = "Numbers.RemovedHexadecimalNumericStrings.Found";
+    let mut fs = vec![pf(r, "error", "plugin.php", 2), pf(r, "error", "plugin.php", 4), pf(r, "error", "plugin.php", 4)];
+    full(fx.path(), &mut fs);
+    assert!(fs.iter().all(|f| f.severity == "info"), "{:?}", sev(&fs));
+    assert!(fs[0].message.contains("PHP 7.0 change"), "{}", fs[0].message);
+    assert_eq!(verdict_of(&fs), "compatible");
+}
+
+#[test]
+fn n3_break_in_braceless_loop_bodies_is_dropped() {
+    let src = "<?php\nfunction first_admin($roles) {\n    $access = false;\n    foreach ($roles as $name)\n        if ($name === 'administrator') {\n            $access = true;\n            break;\n        }\n    return $access;\n}\nfunction next_same($nd) {\n    $t = $nd->nodeType;\n    while ($nd = $nd->nextSibling)\n        if ($nd->nodeType === $t)\n            break;\n    return $nd;\n}\nfunction serve($s) {\n    while (true) try {\n        if (!$s->ok()) { continue; };\n        return 1;\n    } catch (Exception $e) { return 0; }\n}\nfunction chain($a) {\n    for ($i = 0; $i < 3; $i++)\n        if ($a) { $x = 1; }\n        elseif ($i) { $x = 2; }\n        else { break; }\n}\n";
+    let fx = Fixture::new("n3").file("plugin.php", src);
+    let mut fs = vec![pf(BREAK_OUTSIDE, "error", "plugin.php", 7), pf(BREAK_OUTSIDE, "error", "plugin.php", 15), pf(BREAK_OUTSIDE, "error", "plugin.php", 20), pf(BREAK_OUTSIDE, "error", "plugin.php", 28)];
+    full(fx.path(), &mut fs);
+    assert!(fs.is_empty(), "{:?}", fs.iter().map(|f| f.line).collect::<Vec<_>>());
+}
+
+#[test]
+fn n3_break_after_a_braceless_loop_body_ended_stays() {
+    // The loop body is only `foo();`; the break after it is outside any loop (a real fatal error).
+    let src = "<?php\nfunction f($a) {\n    while ($a)\n        foo();\n    break;\n}\nif ($a) {\n    $b = 1;\n    continue;\n}\nfunction g($a) { if ($a) { return; } else { break; } }\n";
+    let fx = Fixture::new("n3b").file("plugin.php", src);
+    let mut fs = vec![pf(BREAK_OUTSIDE, "error", "plugin.php", 5), pf(BREAK_OUTSIDE, "error", "plugin.php", 9), pf(BREAK_OUTSIDE, "error", "plugin.php", 11)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs.len(), 3);
+    assert_eq!(verdict_of(&fs), "breaks");
+}
+
+#[test]
+fn n4_ternary_rule_inside_match_arm_is_info() {
+    let src = "<?php\nclass R {\n    function resolve($id, $s, $c) {\n        return match ($id) {\n            'a' => $s->with([\n                'reason' => ! $c->ok()\n                    ? 'No permission.'\n                    : ($c->live()\n                        ? 'Nothing to publish.'\n                        : null),\n            ]),\n            default => $s,\n        };\n    }\n    function other($a, $b) {\n        return $a ? 1 : $b ? 2 : 3;\n    }\n    function m($q) { return $this->match($q) ? 1 : 2; }\n}\n";
+    let fx = Fixture::new("n4").file("plugin.php", src);
+    let r = "Operators.RemovedTernaryAssociativity.Removed";
+    let mut fs = vec![pf(r, "error", "plugin.php", 7), pf(r, "error", "plugin.php", 16)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    assert!(fs[0].message.contains("match expression"), "{}", fs[0].message);
+    assert_eq!(fs[1].severity, "error", "outside a match block the rule still applies");
+}
+
+#[test]
+fn n5_global_dynamic_variable_is_not_this() {
+    let src = "<?php\nclass GlobalVar {\n    private $name;\n    public function __construct($n) { $this->name = $n; }\n    public function __invoke() { global ${$this->name}; return ${$this->name}; }\n}\nfunction bad() { global $this; }\n";
+    let fx = Fixture::new("n5").file("plugin.php", src);
+    let mut fs = vec![
+        pf("Variables.ForbiddenThisUseContexts.Global", "error", "plugin.php", 5),
+        pf("Variables.ForbiddenGlobalVariableVariable.NonBareVariableFound", "warning", "plugin.php", 5),
+        pf("Variables.ForbiddenThisUseContexts.Global", "error", "plugin.php", 7),
+    ];
+    full(fx.path(), &mut fs);
+    assert_eq!(sev(&fs), vec![("Variables.ForbiddenGlobalVariableVariable.NonBareVariableFound".into(), "info".into()), ("Variables.ForbiddenThisUseContexts.Global".into(), "error".into())]);
+    assert_eq!(fs[1].line, 7);
+}
+
+#[test]
+fn n6_datetimeinterface_interface_dropped_class_info() {
+    let src = "<?php\ninterface MyDateInterface extends DateTimeInterface, JsonSerializable {}\nif (!class_exists('DateTimeImmutable')) {\n    class DateTimeImmutable implements DateTimeInterface {}\n}\n";
+    let fx = Fixture::new("n6").file("plugin.php", src);
+    let mut fs = vec![finding(CARBON_RULE, "error", "plugin.php", 2), finding(CARBON_RULE, "error", "plugin.php", 4)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs.len(), 1);
+    assert_eq!((fs[0].line, fs[0].severity.as_str()), (4, "info"));
+    assert_eq!(verdict_of(&fs), "compatible");
+}
+
+#[test]
+fn n7_define_third_argument_false_or_variable() {
+    let src = "<?php\ndefine('ACME_PREFIX', 'acme.', false);\nfunction d($n, $v, $ci = false) { return define($n, $v, $ci); }\ndefine('ACME_X', 'x', true);\n";
+    let fx = Fixture::new("n7").file("plugin.php", src);
+    let r = "FunctionUse.RemovedFunctionParameters.define_case_insensitiveDeprecatedRemoved";
+    let mut fs = vec![pf(r, "error", "plugin.php", 2), pf(r, "error", "plugin.php", 3), pf(r, "error", "plugin.php", 4)];
+    full(fx.path(), &mut fs);
+    let got: Vec<(u32, &str)> = fs.iter().map(|f| (f.line, f.severity.as_str())).collect();
+    assert_eq!(got, vec![(3, "info"), (4, "error")]);
+}
+
+#[test]
+fn n8_safe_generated_wrappers_are_info() {
+    let src = "<?php\nnamespace Safe;\nfunction oci_bind_array_by_name($statement, string $name, array &$var, int $max, int $len = -1, int $type = SQLT_AFC): void {}\n";
+    let fx = Fixture::new("n8").file("lib/Safe/generated/oci8.php", src);
+    let mut fs = vec![pf("Constants.RemovedConstants.sqlt_afcRemoved", "error", "lib/Safe/generated/oci8.php", 3)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    assert_eq!(verdict_of(&fs), "compatible");
+}
+
+#[test]
+fn n9_composer_build_time_files_are_not_scanned() {
+    use crate::php::non_runtime_reason as nr;
+    for p in [
+        "vendor/composer/platform_check.php",
+        "vendor/composer/installers/src/Composer/Installers/BaseInstaller.php",
+        "vendor_prefixed/composer/installers/src/Composer/Installers/Installer.php",
+        "lib/vendor/composer/platform_check.php",
+    ] {
+        assert!(nr(p, b"<?php").is_some(), "{p}");
+    }
+    for p in ["vendor/composer/autoload_real.php", "vendor/composer/ClassLoader.php", "vendor/acme/composer/platform_check.php", "inc/composer/installers/x.php"] {
+        assert_eq!(nr(p, b"<?php"), None, "{p}");
+    }
+    let fx = Fixture::new("n9")
+        .file("vendor/composer/installers/src/Composer/Installers/BaseInstaller.php", "<?php\nabstract class BaseInstaller {}\n")
+        .file("vendor/composer/platform_check.php", "<?php\n$issues = array();\n")
+        .file("vendor/composer/autoload_real.php", "<?php\n");
+    let files: Vec<String> = crate::php::runtime_files(fx.path()).iter().map(|p| p.strip_prefix(fx.path()).unwrap().to_string_lossy().into_owned()).collect();
+    assert_eq!(files, vec!["vendor/composer/autoload_real.php"]);
+}
+
+#[test]
+fn n10_each_imported_with_use_function_is_not_php_each() {
+    let fx = Fixture::new("n10")
+        .file("src/each.php", "<?php\nnamespace _;\nfunction each($collection, callable $it) { return $collection; }\n")
+        .file("src/internal/agg.php", "<?php\nnamespace _\\internal;\nuse function _\\each;\nfunction agg($c, $f) { each($c, function ($v) use ($f) { $f($v); }); }\n")
+        .file("src/grp.php", "<?php\nnamespace B;\nuse function _\\{map, each};\nfunction g($c) { return each($c, 'f'); }\n")
+        .file("src/alias.php", "<?php\nnamespace C;\nuse function _\\each as walk;\nfunction h($a) { return each($a); }\n");
+    let mut fs = vec![finding(EACH, "error", "src/internal/agg.php", 4), finding(EACH, "error", "src/grp.php", 4), finding(EACH, "error", "src/alias.php", 4)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs.iter().map(|f| f.file.as_str()).collect::<Vec<_>>(), vec!["src/alias.php"], "an aliased import leaves each() as PHP's own");
+}
+
+#[test]
+fn n12_function_exists_dynamic_early_return() {
+    let src = "<?php\nclass Md {\n    public $utf8_strlen = 'mb_strlen';\n    function setup() {\n        if (function_exists($this->utf8_strlen)) return;\n        $this->utf8_strlen = create_function('$text', 'return strlen($text);');\n    }\n}\n";
+    let fx = Fixture::new("n12").file("plugin.php", src);
+    let mut fs = vec![finding(CREATE_FUNCTION, "error", "plugin.php", 6)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    // Default names a function that may be missing: not a guard.
+    let other = src.replace("'mb_strlen'", "'iconv_strlen'");
+    let fx2 = Fixture::new("n12b").file("plugin.php", &other);
+    let mut fs2 = vec![finding(CREATE_FUNCTION, "error", "plugin.php", 6)];
+    full(fx2.path(), &mut fs2);
+    assert_eq!(fs2[0].severity, "error");
+}
+
+#[test]
+fn n13_exit_in_constructor_without_destructor_is_info() {
+    let src = "<?php\nclass Export extends Base_Request {\n    public function __construct() {\n        if (!current_user_can('manage_options')) { exit; }\n    }\n}\n";
+    let r = "FunctionDeclarations.RemovedCallingDestructAfterConstructorExit.NeedsInspection";
+    let fx = Fixture::new("n13").file("plugin.php", src);
+    let mut fs = vec![pf(r, "warning", "plugin.php", 4)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    assert_eq!(verdict_of(&fs), "compatible");
+    // A destructor anywhere in the package keeps the warning.
+    let fx2 = Fixture::new("n13b").file("plugin.php", src).file("inc/base.php", "<?php\nclass Base_Request {\n    public function __destruct() { log_it(); }\n}\n");
+    let mut fs2 = vec![pf(r, "warning", "plugin.php", 4)];
+    full(fx2.path(), &mut fs2);
+    assert_eq!(fs2[0].severity, "warning");
+}
+
+#[test]
+fn n14_http_raw_post_data_set_by_the_file_is_info() {
+    let r = "Variables.RemovedPredefinedGlobalVariables.http_raw_post_dataDeprecatedRemoved";
+    let fx = Fixture::new("n14")
+        .file("a.php", "<?php\nif (!isset($HTTP_RAW_POST_DATA)) {\n    $HTTP_RAW_POST_DATA = file_get_contents('php://input');\n}\n$x = $HTTP_RAW_POST_DATA;\n")
+        .file("b.php", "<?php\nif ($HTTP_RAW_POST_DATA == '') { return; }\n$x = $HTTP_RAW_POST_DATA;\n");
+    let mut fs = vec![pf(r, "error", "a.php", 5), pf(r, "error", "b.php", 3)];
+    full(fx.path(), &mut fs);
+    assert_eq!(sev(&fs).iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>(), vec!["info", "warning"]);
+}
+
+#[test]
+fn n15_package_with_its_own_array_first_needs_no_wordpress_polyfill() {
+    let r = "FunctionUse.NewFunctions.array_firstFound";
+    let uses = "<?php\n/* Plugin Name: X */\n$a = array_first($list);\n";
+    // symfony/polyfill-php85 style bootstrap in the global namespace.
+    let fx = Fixture::new("n15").file("x.php", uses).file("vendor/acme/compat/functions.php", "<?php\nif (!function_exists('array_first')) {\n    function array_first(array $array) { return $array ? reset($array) : null; }\n}\n");
+    let mut fs = vec![pf(r, "error", "x.php", 3)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info", "{}", fs[0].message);
+    // Imported from the plugin's own namespace.
+    let fx2 = Fixture::new("n15b").file("x.php", "<?php\nnamespace Kirki\\Q;\nuse function Kirki\\Polyfill\\array_first;\n$a = array_first($l);\n");
+    let mut fs2 = vec![pf(r, "error", "x.php", 4)];
+    full(fx2.path(), &mut fs2);
+    assert_eq!(fs2[0].severity, "info");
+    // A method named array_first in a class, or nothing at all: still needs WordPress 6.9+.
+    let fx3 = Fixture::new("n15c").file("x.php", uses).file("inc/c.php", "<?php\nclass C { function array_first($a) { return 1; } }\n");
+    let mut fs3 = vec![pf(r, "error", "x.php", 3)];
+    full(fx3.path(), &mut fs3);
+    assert_eq!(fs3[0].severity, "warning");
+    assert!(fs3[0].message.starts_with("Needs WordPress 6.9+"), "{}", fs3[0].message);
+}
+
+#[test]
+fn c1_real_breaks_still_break() {
+    let src = "<?php\nfunction bad($q) { return implode($q, '&'); }\n$s = \"abc\"; echo $s{0};\n";
+    let fx = Fixture::new("c1").file("plugin.php", src);
+    let mut fs = vec![pf("ParameterValues.RemovedImplodeFlexibleParamOrder.Removed", "error", "plugin.php", 2), pf("Syntax.RemovedCurlyBraceArrayAccess.Removed", "error", "plugin.php", 3)];
+    full(fx.path(), &mut fs);
+    assert!(fs.iter().all(|f| f.severity == "error"), "{:?}", sev(&fs));
+    assert_eq!(verdict_of(&fs), "breaks");
+}
+
+// ---------- class H: errors only in bundled libraries ----------
+
+fn stored(per_target: &[(String, Vec<Finding>)], encoded: u32) -> Vec<(String, String, i64, Vec<String>)> {
+    let fx = Fixture::new("dbh");
+    let db = fx.path().join("t.sqlite");
+    let conn = crate::db::open(db.to_str().unwrap()).unwrap();
+    let run = crate::trace::Run::start(&conn, "test", serde_json::json!({})).unwrap();
+    crate::store(&conn, &run.id, "wordpress-plugin", "fixture", "1.0", &[], &[], per_target, encoded, &|_| false).unwrap();
+    let mut stmt = conn.prepare("SELECT id, target, verdict, errors FROM result ORDER BY target").unwrap();
+    let rows: Vec<(i64, String, String, i64)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap().map(|r| r.unwrap()).collect();
+    rows.into_iter()
+        .map(|(id, t, v, e)| {
+            let mut s = conn.prepare("SELECT message FROM finding WHERE result_id=?1 ORDER BY id").unwrap();
+            let msgs = s.query_map([id], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+            (t, v, e, msgs)
+        })
+        .collect()
+}
+
+fn in_lib(mut f: Finding, comp: &str) -> Finding {
+    f.component = Some(comp.into());
+    f
+}
+
+#[test]
+fn h_errors_only_in_bundled_components_give_issues() {
+    let lib = |l| in_lib(finding(EACH, "error", "lib/ftp.php", l), "ftp-lib@1.0");
+    let per_target = vec![
+        ("8.3".to_string(), vec![lib(1), lib(2), finding(EACH, "warning", "main.php", 3)]),
+        ("8.4".to_string(), vec![lib(1), finding(CREATE_FUNCTION, "error", "main.php", 9)]),
+        ("8.5".to_string(), vec![lib(1)]),
+    ];
+    let got = stored(&per_target, 0);
+    let p = crate::BUNDLED_PREFIX;
+    assert_eq!(got[0].1, "issues");
+    assert_eq!(got[0].2, 2, "errors are still counted");
+    assert_eq!(got[0].3, vec![format!("{p}test message"), format!("{p}test message"), "test message".to_string()]);
+    assert_eq!(got[1].1, "breaks", "an error in the plugin's own code keeps breaks");
+    assert_eq!(got[1].3, vec!["test message".to_string(), "test message".to_string()], "no prefix when the verdict is breaks");
+    assert_eq!(got[2].1, "issues");
+    // Never compatible; encoded files still make it unknown.
+    let enc = stored(&[("8.4".to_string(), vec![lib(1)])], 1);
+    assert_eq!(enc[0].1, "unknown");
+}
+
+// ---------- minor fixes ----------
+
+#[test]
+fn encoded_file_detection_needs_a_loader_stub() {
+    use crate::is_encoded_php as enc;
+    assert!(enc("<?php //0046a\nif(!extension_loaded('ionCube Loader')){$__oc=strtolower(substr(php_uname(),0,3));$__ln='ioncube_loader_'.$__oc.'_'.substr(phpversion(),0,3).(($__oc=='win')?'.dll':'.so');}"));
+    assert!(enc("<?php //ICB0 81:0 82:b4a\nif(extension_loaded('ionCube Loader')){die('The file '.__FILE__.\" is corrupted.\\n\");}"));
+    assert!(enc("<?php @\"SourceGuardian\"; //v12.1.2\nif(!function_exists('sg_load')){$__v=phpversion();}return sg_load('52C4625FB82E51A5AAQAAAAXAAAABHAAAACABAAAAAAAAAD/');"));
+    // easy-wp-smtp 2.x ships ionCube's open-source openssl Cryptor: not encoded.
+    assert!(!enc("<?php\n/**\n * Copyright (c) 2016 ionCube Ltd.\n */\nnamespace ioncube\\phpOpensslCryptor;\nclass Cryptor {}\n"));
+    assert!(!enc("<?php\nuse ioncube\\phpOpensslCryptor\\Cryptor;\n// requires SourceGuardian? no\n"));
+}
+
+#[test]
+fn google_apiclient_signature_is_merged_into_composer_entry() {
+    let c = |name: &str, v: &str, path: &str, det: &str| {
+        let mut x = comp(name, Some(v), path);
+        x.detection = det.into();
+        x
+    };
+    let comps = vec![
+        c("google-api-client", "2.12.6", "vendor/google/apiclient/src", "signature"),
+        c("google/apiclient", "2.12.6", "vendor/google/apiclient", "composer-installed"),
+    ];
+    let got: Vec<String> = detect::dedupe_components(comps).iter().map(|c| c.name.clone()).collect();
+    assert_eq!(got, vec!["google/apiclient"]);
+}
+
+#[test]
+fn h_hand_confirmed_bundled_break_keeps_breaks() {
+    let rules = rules();
+    let rule = "PHPCompatibility.ParameterValues.RemovedImplodeFlexibleParamOrder.Removed";
+    let f = in_lib(finding(rule, "error", "lib/Google/Http/REST.php", 129), "google-api-client@1.1.0-beta");
+    assert!(rules.is_confirmed_break("w3-total-cache", &f));
+    assert!(!rules.is_confirmed_break("other-plugin", &f));
+    let fx = Fixture::new("dbc");
+    let conn = crate::db::open(fx.path().join("t.sqlite").to_str().unwrap()).unwrap();
+    let run = crate::trace::Run::start(&conn, "test", serde_json::json!({})).unwrap();
+    let per_target = vec![("8.4".to_string(), vec![f])];
+    crate::store(&conn, &run.id, "wordpress-plugin", "w3-total-cache", "2.11.0", &[], &[], &per_target, 0, &|x| rules.is_confirmed_break("w3-total-cache", x)).unwrap();
+    let (v, m): (String, String) = conn.query_row("SELECT r.verdict, f.message FROM result r JOIN finding f ON f.result_id = r.id", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!((v.as_str(), m.as_str()), ("breaks", "test message"));
+}
+
+#[test]
+fn requests_and_aws_sdk_v1_signatures_cover_their_files() {
+    let fx = Fixture::new("sigs")
+        .file("sdk/libs/Requests-1.6.1/library/Requests.php", "<?php\nclass Requests {\n\tconst VERSION = '1.6.1';\n}\n")
+        .file("sdk/libs/Requests-1.6.1/library/Requests/Transport/fsockopen.php", "<?php\n")
+        .file("lib/aws/sdk.class.php", "<?php\ndefine('CFRUNTIME_NAME', 'aws-sdk-php');\ndefine('CFRUNTIME_VERSION', '1.5.14');\n")
+        .file("lib/aws/lib/requestcore/requestcore.class.php", "<?php\nclass RequestCore {}\n")
+        .file("includes/Requests.php", "<?php\nclass My_Requests { const VERSION = '9'; }\n");
+    let comps = detect::dedupe_components(detect::components(fx.path(), &rules()));
+    let got: Vec<String> = comps.iter().map(|c| format!("{} {}", c.name, c.version.as_deref().unwrap_or("-"))).collect();
+    assert_eq!(got, vec!["aws-sdk-php 1.5.14", "requests 1.6.1"]);
+    assert_eq!(detect::attribute("sdk/libs/Requests-1.6.1/library/Requests/Transport/fsockopen.php", &comps).as_deref(), Some("requests@1.6.1"));
+    assert_eq!(detect::attribute("lib/aws/lib/requestcore/requestcore.class.php", &comps).as_deref(), Some("aws-sdk-php@1.5.14"));
+}
+
+#[test]
+fn strip_comments_ignores_comment_markers_inside_strings() {
+    let src = "<?php\n$files = glob( $dir . '/*' );\n$c = \"#fff\"; $u = 'http://x'; // note\n/* real\n comment */ $x = 1; # hash\n$h = <<<EOT\nit's /* not a comment\nEOT;\n?>\n<p>Don't /* html */</p>\n<?php $y = 2; ?>\n";
+    let out = detect::strip_comments(src);
+    assert_eq!(out.lines().count(), src.lines().count());
+    let want = "<?php\n$files = glob( $dir . '/*' );\n$c = \"#fff\"; $u = 'http://x'; \n\n $x = 1; \n$h = <<<EOT\nit's /* not a comment\nEOT;\n?>\n<p>Don't /* html */</p>\n<?php $y = 2; ?>\n";
+    assert_eq!(out, want);
+    // A `'/*'` string earlier in the file must not hide a braceless loop body (seraphinite-accelerator).
+    let loop_src = "<?php\nfunction f($d, $id) {\n\t$a = glob( $d . '/*' );\n\tforeach( glob( $d . '/' . bin2hex( $id ) . '.*', GLOB_NOSORT ) as $file )\n\t\tbreak;\n\treturn $file;\n}\n";
+    let fx = Fixture::new("strip").file("common.php", loop_src);
+    let mut fs = vec![pf(BREAK_OUTSIDE, "error", "common.php", 5)];
+    full(fx.path(), &mut fs);
+    assert!(fs.is_empty());
 }

@@ -10,9 +10,10 @@ version, so bump it when a rule changes and re-scan the affected packages.
 | `php-extensions.json` | Finds PHP extensions the code calls directly (gd, intl, ...) | LeapCheck | our own, checked against real plugins |
 | `retire-jsrepository.json` | Finds JS libraries (often minified) and known vulnerabilities | upstream RetireJS | Apache-2.0 open data (see below) |
 | `suppressions.json` | Known false positives and rules that do not break on an upgrade (remove, or lower to warning / info) | LeapCheck | our own, checked against real plugins |
+| `confirmed-breaks.json` | Errors in bundled library code that were checked by hand and are reached by the package, so they keep the "breaks" verdict | LeapCheck | our own, each entry checked in the real package |
 | `wp-polyfills.json` | New PHP functions WordPress core defines itself on older PHP (`wp-includes/compat.php`) | LeapCheck | WordPress core source (GPL), function names and versions only |
 
-Current contents (v1, 2026-11-04): **35 PHP signatures, 26 extensions, 76 RetireJS library entries (798 vulnerability records)**.
+Current contents (v1, 2026-11-04): **37 PHP signatures, 25 extensions, 76 RetireJS library entries (798 vulnerability records)**.
 
 ---
 
@@ -53,7 +54,7 @@ Conventions:
 phpmailer, tcpdf, fpdf, mpdf, dompdf*, guzzle (6+), guzzle3, twig, simplepie, phpexcel, phpspreadsheet*,
 monolog (major only), carbon*, freemius, action-scheduler, cmb2, redux-framework (4.x), reduxcore (3.x),
 titan-framework, tgm-plugin-activation, kirki, carbon-fields, stripe-php, paypal-rest-sdk,
-google-api-client, aws-sdk-php (version usually unknown, see below), htmlpurifier, phpseclib*,
+google-api-client, aws-sdk-php (v3: version usually unknown, see below; v1.x via sdk.class.php), requests, htmlpurifier, phpseclib*,
 parsedown, mobile-detect, getid3, scssphp, scssphp-legacy, lessphp, less.php.
 `*` = presence-only (no version in source).
 
@@ -93,7 +94,8 @@ How the patterns avoid false positives:
 - APCu skips Composer's `apcu_fetch($this->apcuPrefix...)`, which ships in almost every `vendor/`.
 
 Extensions: gd, imagick, mbstring, intl, curl, zip, dom, simplexml, xml, xmlreader, sodium, bcmath,
-gmp, exif, openssl, soap, mysqli, iconv, fileinfo, json, sockets, ftp, ldap, apcu, redis, memcached.
+gmp, exif, openssl, soap, mysqli, iconv, fileinfo, sockets, ftp, ldap, apcu, redis, memcached. (`json` was
+removed: it is always enabled since PHP 8.0.)
 
 ## 3. `retire-jsrepository.json` (third-party open data)
 
@@ -148,6 +150,22 @@ for a listed function becomes `info` when the package's `Requires at least:` (pl
 `style.css`, or readme) is at least `wp_since`, otherwise `warning` ("needs WordPress X+ on this PHP").
 Source: `wp-includes/compat.php` in WordPress core (array_first/array_last: changeset 60672, ticket #63853).
 Only versions already released are listed.
+
+## 6. `confirmed-breaks.json`
+
+```json
+[{"package": "w3-total-cache", "rule_id": "PHPCompatibility.ParameterValues.RemovedImplodeFlexibleParamOrder.Removed",
+  "path_regex": "(^|/)lib/Google/Http/REST\\.php$", "reason": "...", "verified_in": ["w3-total-cache@2.11.0 (...)"]}]
+```
+
+When every error of a target lies inside a bundled third-party library (the finding has a
+`component`), the verdict is `issues`, not `breaks`, and those errors get the message prefix
+"In bundled library code (may only break if this code runs): ". Bundled code is often never
+called, and a static scan cannot prove that it is. An error in the package's own code keeps `breaks`.
+An entry here marks a bundled-library error that was checked by hand and *is* reached, so it keeps
+`breaks`. `package` is the slug, `rule_id` an exact rule ID or a prefix ending in `*`, `path_regex` is matched
+against the file path relative to the package root. `reason` and `verified_in` are documentation. Add an
+entry only after reading the code path that calls the library.
 
 ## Verification method (how every rule was checked)
 

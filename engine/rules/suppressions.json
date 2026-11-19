@@ -1,8 +1,32 @@
 [
   {
+    "rule_id": "PHPCompatibility.*",
+    "path_regex": "(?i)(^|/)polyfill[-/][^/]+/(Resources/stubs/|bootstrap[0-9]*\\.php$)",
+    "action": "info",
+    "reason": "polyfill file: it only declares the class or function when PHP does not have it yet, so it is skipped on newer PHP"
+  },
+  {
     "rule_id": "PHPCompatibility.Interfaces.InternalInterfaces.datetimeinterfaceFound",
     "path_regex": "(?i)CarbonInterface\\.php$",
     "reason": "Carbon's CarbonInterface is an interface that extends DateTimeInterface, which is valid PHP. Only classes may not implement DateTimeInterface directly; Carbon's classes extend DateTime/DateTimeImmutable."
+  },
+  {
+    "rule_id": "PHPCompatibility.Interfaces.InternalInterfaces.datetimeinterfaceFound",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "existing PHP 5.5 restriction, not caused by the upgrade; polyfill classes for DateTimeImmutable only load on very old PHP"
+  },
+  {
+    "rule_id": "PHPCompatibility.Numbers.RemovedHexadecimalNumericStrings.Found",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "PHP 7.0 change that only affects numeric comparison or arithmetic on hex strings such as \"0x1A\"; code that runs on PHP 7 or 8 today already has this behaviour"
+  },
+  {
+    "rule_id": "PHPCompatibility.*",
+    "path_regex": "(?i)(^|/)safe/generated/",
+    "action": "info",
+    "reason": "generated wrapper function of the Safe library: removed constants only appear as default parameter values, which PHP evaluates only when the wrapper is called without that argument"
   },
   {
     "rule_id": "PHPCompatibility.FunctionUse.ArgumentFunctionsReportCurrentValue.Changed",

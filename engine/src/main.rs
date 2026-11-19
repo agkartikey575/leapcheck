@@ -250,13 +250,22 @@ fn scan_wp(cli: &Cli, conn: &Connection, run: &trace::Run, eco: &str, slug: &str
     res
 }
 
+/// True when the start of a PHP file is an encoder's loader stub: ionCube
+/// (`extension_loaded('ionCube Loader')`, `ioncube_loader_<os>_<ver>`) or SourceGuardian
+/// (`sg_load('...')`). Mentions in comments, namespaces or class names (e.g. ionCube's open-source
+/// `ioncube\phpOpensslCryptor`) do not count.
+pub fn is_encoded_php(head: &str) -> bool {
+    let ioncube = regex::Regex::new(r#"(?i)extension_loaded\s*\(\s*['"]ioncube loader['"]|ioncube_loader_\w*\.(so|dll)|ioncube_loader_['"]?\s*\.|\b_il_exec\s*\("#).unwrap();
+    let sourceguardian = regex::Regex::new(r#"\bsg_load\s*\(\s*['"]"#).unwrap();
+    ioncube.is_match(head) || sourceguardian.is_match(head)
+}
+
 fn count_encoded(root: &Path) -> u32 {
     let mut n = 0;
     for e in walkdir::WalkDir::new(root).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()) {
         if e.path().extension().map_or(false, |x| x == "php") {
             if let Ok(b) = std::fs::read(e.path()) {
-                let h = String::from_utf8_lossy(&b[..b.len().min(4096)]);
-                if h.contains("ioncube") || h.contains("ionCube") || h.contains("sg_load(") || h.contains("SourceGuardian") {
+                if is_encoded_php(&String::from_utf8_lossy(&b[..b.len().min(4096)])) {
                     n += 1;
                 }
             }
@@ -291,12 +300,28 @@ fn scan_root(cli: &Cli, conn: &Connection, run: &trace::Run, eco: &str, name: &s
         detect::post_process(root, &cli.rules, &mut findings);
         per_target.push((t.clone(), findings));
     }
-    run.step("store", || store(conn, &run.id, eco, name, version, &components, &requirements, &per_target, encoded))?;
+    let confirmed = |f: &Finding| rules.is_confirmed_break(name, f);
+    run.step("store", || store(conn, &run.id, eco, name, version, &components, &requirements, &per_target, encoded, &confirmed))?;
     Ok(())
 }
 
+/// Message prefix for errors when every error of a target lies in bundled library code.
+pub const BUNDLED_PREFIX: &str = "In bundled library code (may only break if this code runs): ";
+
 #[allow(clippy::too_many_arguments)]
-fn store(conn: &Connection, run_id: &str, eco: &str, name: &str, version: &str, comps: &[Component], reqs: &[Requirement], per_target: &[(String, Vec<Finding>)], encoded: u32) -> Result<()> {
+/// `confirmed` marks bundled-library errors checked by hand as reachable (rules/confirmed-breaks.json).
+fn store(
+    conn: &Connection,
+    run_id: &str,
+    eco: &str,
+    name: &str,
+    version: &str,
+    comps: &[Component],
+    reqs: &[Requirement],
+    per_target: &[(String, Vec<Finding>)],
+    encoded: u32,
+    confirmed: &dyn Fn(&Finding) -> bool,
+) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     tx.execute("INSERT OR IGNORE INTO package_version (ecosystem, name, version) VALUES (?1, ?2, ?3)", params![eco, name, version])?;
     let pv: i64 = tx.query_row("SELECT id FROM package_version WHERE ecosystem=?1 AND name=?2 AND version=?3", params![eco, name, version], |r| r.get(0))?;
@@ -316,11 +341,16 @@ fn store(conn: &Connection, run_id: &str, eco: &str, name: &str, version: &str, 
         let target = format!("php:{t}");
         let errors = findings.iter().filter(|f| f.severity == "error").count() as i64;
         let warnings = findings.iter().filter(|f| f.severity == "warning").count() as i64;
-        let verdict = if errors > 0 {
+        // Errors only inside bundled third-party libraries may sit in code the plugin never
+        // calls, so they do not prove the plugin breaks: the verdict is "issues" (never
+        // "compatible"). Any error in the plugin's own code, or a bundled-library error checked
+        // by hand as reachable, keeps "breaks".
+        let bundled_only = errors > 0 && findings.iter().filter(|f| f.severity == "error").all(|f| f.component.is_some() && !confirmed(f));
+        let verdict = if errors > 0 && !bundled_only {
             "breaks"
         } else if encoded > 0 {
             "unknown"
-        } else if warnings > 0 {
+        } else if warnings > 0 || bundled_only {
             "issues"
         } else {
             "compatible"
@@ -332,12 +362,13 @@ fn store(conn: &Connection, run_id: &str, eco: &str, name: &str, version: &str, 
         )?;
         let rid = tx.last_insert_rowid();
         for f in findings {
+            let message = if bundled_only && f.severity == "error" { format!("{BUNDLED_PREFIX}{}", f.message) } else { f.message.clone() };
             tx.execute(
                 "INSERT INTO finding (result_id, rule_id, severity, confidence, message, file, line, component, analyzer) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-                params![rid, f.rule_id, f.severity, f.confidence, f.message, f.file, f.line, f.component, f.analyzer],
+                params![rid, f.rule_id, f.severity, f.confidence, message, f.file, f.line, f.component, f.analyzer],
             )?;
         }
-        trace::log(run_id, "info", "store", "result stored", json!({"target": target, "verdict": verdict, "errors": errors, "warnings": warnings}));
+        trace::log(run_id, "info", "store", "result stored", json!({"target": target, "verdict": verdict, "errors": errors, "warnings": warnings, "bundled_only": bundled_only}));
     }
     tx.commit()?;
     Ok(())

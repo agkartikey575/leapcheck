@@ -125,6 +125,20 @@ pub fn non_runtime_reason(rel: &str, first_bytes: &[u8]) -> Option<&'static str>
     if dirs.iter().any(|d| matches!(*d, "test" | "tests" | "Test" | "Tests")) {
         return Some("test suite");
     }
+    // Composer build-time files: `vendor*/composer/platform_check.php` only stops very old PHP
+    // (older than the package's minimum) and `vendor*/composer/installers/` is a Composer plugin
+    // that runs during `composer install`, never inside WordPress.
+    for (v, d) in dirs.iter().enumerate() {
+        if d.starts_with("vendor") && dirs.get(v + 1) == Some(&"composer") {
+            let rest = &dirs[v + 2..];
+            if rest.first() == Some(&"installers") {
+                return Some("Composer build-time plugin (composer/installers)");
+            }
+            if rest.is_empty() && fname == "platform_check.php" {
+                return Some("Composer platform check (only stops PHP older than the package minimum)");
+            }
+        }
+    }
     // Inside a bundled library: demo GUIs, examples, CLI tools and code-generator templates.
     if let Some(v) = dirs.iter().position(|d| d.starts_with("vendor")) {
         let inner = &dirs[v + 1..];
