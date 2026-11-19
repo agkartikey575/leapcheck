@@ -2,7 +2,7 @@
 title: Hidden libraries in plugins that block PHP upgrades
 description: Plugins often ship their own copies of libraries like PHPMailer or PHPExcel. Why old bundled copies break on new PHP, and why two copies can clash.
 h1: Hidden libraries: why old code bundled inside plugins blocks your PHP upgrade
-updated: 2026-11-16
+updated: 2026-11-19
 ---
 
 When a PHP upgrade breaks a site, the error often doesn't point at the plugin's own code. It points into a folder like `vendor/`, `lib/` or `includes/libraries/` inside the plugin. That is a **bundled library**: a copy of someone else's code that the plugin ships with. This guide explains why these copies are a common, hidden blocker for PHP upgrades, and what you can do about them.
@@ -67,7 +67,7 @@ The limits: we can only report libraries we have a signature for, a heavily modi
 
 ### As a site owner
 
-1. Check your plugins on the [results pages](/plugins/), or check your whole site at once with the [free LeapCheck plugin](https://github.com/agkartikey575/leapcheck). Look at the hidden libraries section, not only the verdict.
+1. Check your plugins on the [results pages](/plugins/), or check your whole site at once with the [free LeapCheck plugin](/get/). Look at the hidden libraries section, not only the verdict.
 2. Update the plugin. Authors often update bundled libraries in new releases.
 3. If the latest version still bundles a library that fails on your target PHP version, tell the author in the plugin's support forum. Include the library name, version and path. That makes it easy to act on.
 4. When an error message points into a library folder, note which plugin's folder it is in. If two plugins bundle the same library, try deactivating one of them on a staging copy to see whether the error changes.

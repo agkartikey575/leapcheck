@@ -2,7 +2,7 @@
 title: PHP 8.2 end of life (31 Dec 2026): WordPress guide
 description: PHP 8.2 security support ends on 31 December 2026. What that means for your WordPress site, which version to move to, and a safe 3-step plan.
 h1: PHP 8.2 end of life (31 Dec 2026): what WordPress site owners need to do
-updated: 2026-11-16
+updated: 2026-11-19
 ---
 
 **Short answer:** PHP 8.2 gets its last security fixes until **31 December 2026**. After that date, the PHP project stops releasing fixes for it, even for security holes. Your site will not switch off on 1 January, but it will run on software that no longer gets patched. The safe move is to check your plugins and theme, then upgrade to PHP 8.3, 8.4 or 8.5 with a way to roll back.
@@ -30,7 +30,7 @@ Check the [supported versions page](https://www.php.net/supported-versions.php) 
 - Your site stops working on 1 January 2027. PHP 8.2 keeps running exactly as before.
 - Your site is suddenly unsafe. The risk is that any PHP 8.2 security problem found after that date stays unfixed, so the risk grows over time.
 
-**What usually forces the change is your host.** Hosts decide which PHP versions they keep offering. When a version reaches end of life, a host may move sites to a newer version automatically, keep offering the old one for a while, or offer paid extended support. Read your host's emails and help pages, or ask their support team: "When will you stop offering PHP 8.2, and will you move my site automatically?"
+**What usually forces the change is your host.** Hosts decide which PHP versions they keep offering. When a version reaches end of life, a host may move sites to a newer version automatically, keep offering the old one for a while, or offer paid extended support. Read your host's emails and help pages, or ask their support team: "When will you stop offering PHP 8.2, and will you move my site automatically?" More questions to ask are in [PHP 8.2 end of life and your hosting](/guides/php-8-2-end-of-life-hosting/).
 
 If your host upgrades PHP for you and a plugin is not ready, that is when sites break. Checking first puts you in control of the timing.
 
@@ -52,14 +52,14 @@ Core support is only part of the picture. It says nothing about your plugins and
 
 ### 1. Check
 
-Find your current PHP version in your dashboard under **Tools → Site Health → Info → Server**. Then make a list of your active plugins and your theme, and check each one against the PHP version you plan to move to.
+Find your current PHP version in your dashboard under **Tools → Site Health → Info → Server** (step by step: [how to check your PHP version](/guides/how-to-check-php-version-wordpress/)). Then make a list of your active plugins and your theme, and check each one against the PHP version you plan to move to.
 
-You can look up any public plugin in our [plugin results](/plugins/): each page shows the result for PHP 8.3, 8.4 and 8.5, with the file and line of every finding. To check everything installed on a site at once, use the [free LeapCheck plugin](https://github.com/agkartikey575/leapcheck).
+You can look up any public plugin in our [plugin results](/plugins/): each page shows the result for PHP 8.3, 8.4 and 8.5, with the file and line of every finding. To check everything installed on a site at once, [download the free LeapCheck plugin](/get/). It is waiting for review in the WordPress.org plugin directory, so for now you install it from our site.
 
 ### 2. Fix or update
 
 - Update WordPress, every plugin and your theme. Many compatibility problems are already fixed in newer versions.
-- For a plugin that still has errors on its latest version, ask the author in its support forum, or look for a maintained replacement.
+- For a plugin that still has errors on its latest version, ask the author in its support forum, or look for a maintained replacement. See [what to do when a plugin isn't ready](/guides/php-8-4-wordpress-plugins-not-compatible/).
 - For a plugin that has been closed or not updated in years, plan to replace it. Nobody will fix it for a new PHP version.
 - Look out for old libraries bundled inside plugins. They are a common hidden blocker: see [hidden libraries and PHP upgrades](/guides/hidden-libraries-php-upgrades/).
 

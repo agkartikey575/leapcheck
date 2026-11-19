@@ -2,7 +2,7 @@
 title: How to upgrade PHP on WordPress safely, step by step
 description: Back up, check plugins, test on staging, switch PHP, and know how to roll back. A practical checklist for upgrading PHP on a WordPress site.
 h1: How to upgrade PHP on a WordPress site without breaking it
-updated: 2026-11-16
+updated: 2026-11-19
 ---
 
 Upgrading PHP is usually a single setting in your hosting panel. The risk is not the switch itself but the code that runs on top of it: plugins, themes and the libraries bundled inside them. This guide walks through the upgrade in the order that keeps your site safe: back up, check, update, test on a copy, switch, and keep a way back.
@@ -12,14 +12,14 @@ If you are doing this because of the PHP 8.2 deadline, read [PHP 8.2 end of life
 ## Step 1: Back up and take notes
 
 1. **Make a full backup** of files and database, and make sure you can restore it. A backup you have never restored is a hope, not a plan. Many hosts include backups; a backup plugin works too.
-2. **Find your current PHP version.** In your dashboard, go to **Tools → Site Health → Info** and open the **Server** section. Write the version down: it is the version you roll back to if needed.
+2. **Find your current PHP version.** In your dashboard, go to **Tools → Site Health → Info** and open the **Server** section ([more detail](/guides/how-to-check-php-version-wordpress/)). Write the version down: it is the version you roll back to if needed.
 3. **List your plugins and theme** with their version numbers. The Site Health Info screen has a "Copy site info to clipboard" button that includes them.
 
 ## Step 2: Check compatibility before you switch
 
 You want to know, per plugin and theme, whether it will run on the new PHP version. There are three ways to find out, and they work best together.
 
-- **Look up the results.** Our [plugin results](/plugins/) show each public plugin's result for PHP 8.3, 8.4 and 8.5, with the file, line and message for every finding. The [free LeapCheck plugin](https://github.com/agkartikey575/leapcheck) does the same for everything installed on your site in one go. It only downloads public results after you agree, and sends nothing about your site.
+- **Look up the results.** Our [plugin results](/plugins/) show each public plugin's result for PHP 8.3, 8.4 and 8.5, with the file, line and message for every finding. The [free LeapCheck plugin](/get/) does the same for everything installed on your site in one go (it is waiting for review in the WordPress.org directory, so for now you download it from our site). It only downloads public results after you agree, and each request names just one plugin or theme and its version.
 - **Read the plugin's own information.** On a plugin's WordPress.org page, "Requires PHP" is the *minimum* version it needs. It does not tell you the newest version it works on. The changelog often mentions PHP 8.x fixes.
 - **Ask the author.** If you are unsure, ask in the plugin's support forum which PHP versions they test on.
 
@@ -36,7 +36,7 @@ Automated checks read the code without running it, so they cannot see everything
 1. Update WordPress core.
 2. Update every plugin and theme, including inactive ones you might reactivate. Better still, delete plugins you don't use.
 3. Check again after updating. Many problems are fixed in the latest version.
-4. For anything still showing errors: ask the author, or find a maintained replacement. Plugins that have been closed on WordPress.org or not updated for years are unlikely to get PHP fixes.
+4. For anything still showing errors: ask the author, or find a maintained replacement. Plugins that have been closed on WordPress.org or not updated for years are unlikely to get PHP fixes. The options are covered in [what to do when a plugin isn't ready](/guides/php-8-4-wordpress-plugins-not-compatible/).
 5. Premium or custom plugins are not in public databases. Ask their vendor or developer directly.
 
 ## Step 4: Test on a staging copy
@@ -80,7 +80,7 @@ A few "Deprecated" lines in the log are normal and don't break anything. "Fatal 
 
 ## If your host is upgrading PHP for you
 
-Hosts sometimes announce that they will move sites to a newer PHP version on a set date. Don't wait for that date: run steps 1 to 6 yourself before it, on your own schedule. Ask your host whether you can choose the new version earlier and switch back if needed.
+Hosts sometimes announce that they will move sites to a newer PHP version on a set date. Don't wait for that date: run steps 1 to 6 yourself before it, on your own schedule. Ask your host whether you can choose the new version earlier and switch back if needed. [PHP 8.2 end of life and your hosting](/guides/php-8-2-end-of-life-hosting/) lists the questions worth asking.
 
 ## Managing many sites
 
