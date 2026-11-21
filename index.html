@@ -1,0 +1,33 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Will your WordPress site break on PHP 8.4? | LeapCheck</title><meta name="description" content="Check which plugins break on PHP 8.3, 8.4 and 8.5 before PHP 8.2 support ends on 31 Dec 2026. Free, automated, open source."><link rel="canonical" href="https://leapcheck.vercel.app/"><meta property="og:title" content="Will your WordPress site break on PHP 8.4? | LeapCheck"><meta property="og:description" content="Check which plugins break on PHP 8.3, 8.4 and 8.5 before PHP 8.2 support ends on 31 Dec 2026. Free, automated, open source."><meta property="og:type" content="website"><style>
+:root{--bg:#fbfaf7;--fg:#1d1f24;--mut:#5d6370;--card:#fff;--line:#e4e1da;--acc:#2f5bd3;--ok:#1f7a45;--warn:#9a6400;--bad:#b3261e;--unk:#5d6370}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e8e6e1;--mut:#a3a8b3;--card:#1c1f24;--line:#2d3138;--acc:#8aa8ff;--ok:#5fcf8c;--warn:#f0b450;--bad:#ff8a80;--unk:#a3a8b3}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:920px;margin:0 auto;padding:24px 16px 64px}a{color:var(--acc)}
+header.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+.brand{font-weight:800;font-size:20px;text-decoration:none;color:var(--fg)}.brand span{color:var(--acc)}
+h1{font-size:clamp(26px,4vw,36px);line-height:1.2;margin:8px 0}h2{font-size:21px;margin:36px 0 10px}
+.lead{font-size:18px;color:var(--mut)}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0}
+.chips{display:flex;gap:10px;flex-wrap:wrap}.chipbox{display:flex;flex-direction:column;gap:4px}.chipbox b{font-size:13px;color:var(--mut)}
+.chip{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-weight:600;font-size:14px}
+.chip.ok{color:var(--ok)}.chip.warn{color:var(--warn)}.chip.bad{color:var(--bad)}.chip.unk{color:var(--unk)}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mut);font-weight:600}.scroll{overflow-x:auto}code{font-size:13px;word-break:break-all}
+.small{font-size:13px;color:var(--mut)}.cta{display:inline-block;background:var(--acc);color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600}
+@media (prefers-color-scheme:dark){.cta{color:#14161a}}
+.count{font-size:clamp(28px,6vw,44px);font-weight:800;letter-spacing:-.5px}
+input[type=search]{width:100%;padding:12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-size:16px}
+footer{margin-top:48px;border-top:1px solid var(--line);padding-top:16px;font-size:13px;color:var(--mut)}
+details summary{cursor:pointer;font-weight:600}
+.guide code{word-break:normal;overflow-wrap:anywhere}.lib{border-bottom:1px solid var(--line);padding:4px 0 8px}.lib h3{margin:12px 0 0;overflow-wrap:anywhere}.lib ul{margin:6px 0;padding-left:20px}
+</style></head><body><div class="wrap"><header class="top"><a class="brand" href="/">Leap<span>Check</span></a><nav class="small"><a href="/plugins/">Plugins</a> · <a href="/libraries/">Libraries</a> · <a href="/guides/">Guides</a> · <a href="/about/how-we-scan/">How we scan</a> · <a href="https://github.com/agkartikey575/leapcheck">Open source</a></nav></header><h1>Check before you leap.</h1>
+<p class="lead">PHP 8.2 stops getting security fixes on 31 December 2026, and hosts are moving sites to newer PHP. LeapCheck tells you which of your plugins will break on PHP 8.3, 8.4 and 8.5, before you upgrade, including old libraries hidden inside them.</p>
+<div class="card"><div class="small">PHP 8.2 security support ends in</div><div class="count" id="cd">…</div><p class="small"><a href="/guides/php-8-2-end-of-life/">What PHP 8.2 end of life means for your site</a></p></div>
+<div class="card"><label for="q"><b>Is your plugin ready?</b> Type its WordPress.org slug (the folder name, e.g. <code>contact-form-7</code>)</label><p><input type="search" id="q" placeholder="plugin-slug" autocomplete="off"></p><div id="res" class="small"></div></div>
+<h2>What we've checked so far</h2><p>1000 plugins scanned for PHP 8.4: <b>657</b> compatible, <b>327</b> run with warnings, <b>16</b> have errors, <b>0</b> couldn't be scanned. <a href="/plugins/">See all results</a></p>
+<div class="card"><b>Check your whole site at once.</b> The free LeapCheck plugin checks every plugin and theme you have installed. It only looks up public plugin names and versions, only after you agree, and sends nothing about your site.<p><a class="cta" href="/get/">Get the free plugin</a></p></div>
+<script>
+(function(){var d=new Date("2026-12-31T23:59:59Z"),el=document.getElementById("cd");function t(){var s=Math.max(0,(d-new Date())/1000|0);el.textContent=s?Math.floor(s/86400)+" days "+Math.floor(s%86400/3600)+" hours":"Support has ended";}t();setInterval(t,60000);
+var q=document.getElementById("q"),r=document.getElementById("res"),tm;q.addEventListener("input",function(){clearTimeout(tm);tm=setTimeout(go,300);});
+function go(){var s=q.value.trim().toLowerCase();if(!/^[a-z0-9][a-z0-9-]{0,199}$/.test(s)){r.textContent="";return;}
+fetch("/v1/wordpress-plugin/"+s+"/index.json").then(function(x){if(!x.ok)throw 0;return x.json();}).then(function(i){r.innerHTML='Found: <a href="/plugins/'+s+'/">'+s+' (version '+i.latest+')</a>';}).catch(function(){r.textContent="Not in our database yet. Popular plugins are added first; check back soon.";});}})();
+</script><footer>LeapCheck checks public plugin code for PHP version compatibility with open-source static analysis. Results are automated and are not a guarantee. LeapCheck is not affiliated with WordPress, the WordPress Foundation or any plugin author; names are trademarks of their owners. <a href="/about/how-we-scan/">Methodology and limits</a> · <a href="/privacy/">Privacy</a> · <a href="https://github.com/agkartikey575/leapcheck/issues/new?title=Wrong%20result">Report a wrong result</a></footer></div></body></html>

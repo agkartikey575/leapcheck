@@ -1,0 +1,31 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>How LeapCheck scans plugins for PHP compatibility</title><meta name="description" content="Methodology, verdicts and limits of LeapCheck&#39;s automated PHP compatibility scans."><link rel="canonical" href="https://leapcheck.vercel.app/about/how-we-scan/"><meta property="og:title" content="How LeapCheck scans plugins for PHP compatibility"><meta property="og:description" content="Methodology, verdicts and limits of LeapCheck&#39;s automated PHP compatibility scans."><meta property="og:type" content="website"><style>
+:root{--bg:#fbfaf7;--fg:#1d1f24;--mut:#5d6370;--card:#fff;--line:#e4e1da;--acc:#2f5bd3;--ok:#1f7a45;--warn:#9a6400;--bad:#b3261e;--unk:#5d6370}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e8e6e1;--mut:#a3a8b3;--card:#1c1f24;--line:#2d3138;--acc:#8aa8ff;--ok:#5fcf8c;--warn:#f0b450;--bad:#ff8a80;--unk:#a3a8b3}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:920px;margin:0 auto;padding:24px 16px 64px}a{color:var(--acc)}
+header.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+.brand{font-weight:800;font-size:20px;text-decoration:none;color:var(--fg)}.brand span{color:var(--acc)}
+h1{font-size:clamp(26px,4vw,36px);line-height:1.2;margin:8px 0}h2{font-size:21px;margin:36px 0 10px}
+.lead{font-size:18px;color:var(--mut)}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0}
+.chips{display:flex;gap:10px;flex-wrap:wrap}.chipbox{display:flex;flex-direction:column;gap:4px}.chipbox b{font-size:13px;color:var(--mut)}
+.chip{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-weight:600;font-size:14px}
+.chip.ok{color:var(--ok)}.chip.warn{color:var(--warn)}.chip.bad{color:var(--bad)}.chip.unk{color:var(--unk)}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mut);font-weight:600}.scroll{overflow-x:auto}code{font-size:13px;word-break:break-all}
+.small{font-size:13px;color:var(--mut)}.cta{display:inline-block;background:var(--acc);color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600}
+@media (prefers-color-scheme:dark){.cta{color:#14161a}}
+.count{font-size:clamp(28px,6vw,44px);font-weight:800;letter-spacing:-.5px}
+input[type=search]{width:100%;padding:12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-size:16px}
+footer{margin-top:48px;border-top:1px solid var(--line);padding-top:16px;font-size:13px;color:var(--mut)}
+details summary{cursor:pointer;font-weight:600}
+.guide code{word-break:normal;overflow-wrap:anywhere}.lib{border-bottom:1px solid var(--line);padding:4px 0 8px}.lib h3{margin:12px 0 0;overflow-wrap:anywhere}.lib ul{margin:6px 0;padding-left:20px}
+</style></head><body><div class="wrap"><header class="top"><a class="brand" href="/">Leap<span>Check</span></a><nav class="small"><a href="/plugins/">Plugins</a> · <a href="/libraries/">Libraries</a> · <a href="/guides/">Guides</a> · <a href="/about/how-we-scan/">How we scan</a> · <a href="https://github.com/agkartikey575/leapcheck">Open source</a></nav></header><h1>How we scan</h1>
+<p class="lead">LeapCheck reads the public code of each plugin version and checks it against the known changes in every PHP version. It never runs plugin code.</p>
+<h2>What we check</h2><ul>
+<li><b>PHP compatibility</b> with <a href="https://github.com/PHPCompatibility/PHPCompatibility">PHPCompatibility</a>, an open-source rule set built from PHP's official change notes, for PHP 8.3, 8.4 and 8.5.</li>
+<li><b>Hidden libraries</b>: copies of other libraries bundled inside a plugin, found by package manifests, file signatures and <a href="https://github.com/RetireJS/retire.js">RetireJS</a> open data (Apache-2.0) for JavaScript.</li>
+<li><b>Server requirements</b>: PHP extensions the code appears to use.</li></ul>
+<h2>Verdicts</h2><ul><li>✅ <b>Compatible</b>: nothing known to break or be deprecated.</li><li>⚠️ <b>Runs, with warnings</b>: deprecated features only.</li><li>❌ <b>Errors found</b>: removed or changed features that can stop code working.</li><li>❓ <b>Not scannable</b>: encoded or unreadable code.</li></ul>
+<h2>Limits</h2><p>Static analysis can't see code that is generated while running, <code>eval</code>, or encoded files, and it can't find a plugin's own logic bugs. A clean result is not a guarantee: always test upgrades on a staging copy first.</p>
+<h2>Freshness and corrections</h2><p>New plugin versions are re-scanned automatically. Every result records the engine and rule versions that produced it. If a result looks wrong, <a href="https://github.com/agkartikey575/leapcheck/issues/new?title=Wrong%20result">report it</a>; plugin authors can request a re-scan the same way.</p>
+<h2>Open source</h2><p>The scanner is open source: <a href="https://github.com/agkartikey575/leapcheck">github.com/agkartikey575/leapcheck</a>.</p><footer>LeapCheck checks public plugin code for PHP version compatibility with open-source static analysis. Results are automated and are not a guarantee. LeapCheck is not affiliated with WordPress, the WordPress Foundation or any plugin author; names are trademarks of their owners. <a href="/about/how-we-scan/">Methodology and limits</a> · <a href="/privacy/">Privacy</a> · <a href="https://github.com/agkartikey575/leapcheck/issues/new?title=Wrong%20result">Report a wrong result</a></footer></div></body></html>

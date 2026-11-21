@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://leapcheck.vercel.app/sitemap.xml

@@ -1,0 +1,34 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Privacy | LeapCheck</title><meta name="description" content="LeapCheck collects no site data: no cookies, no analytics, and the plugin only fetches public files after you opt in."><link rel="canonical" href="https://leapcheck.vercel.app/privacy/"><meta property="og:title" content="Privacy | LeapCheck"><meta property="og:description" content="LeapCheck collects no site data: no cookies, no analytics, and the plugin only fetches public files after you opt in."><meta property="og:type" content="website"><style>
+:root{--bg:#fbfaf7;--fg:#1d1f24;--mut:#5d6370;--card:#fff;--line:#e4e1da;--acc:#2f5bd3;--ok:#1f7a45;--warn:#9a6400;--bad:#b3261e;--unk:#5d6370}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e8e6e1;--mut:#a3a8b3;--card:#1c1f24;--line:#2d3138;--acc:#8aa8ff;--ok:#5fcf8c;--warn:#f0b450;--bad:#ff8a80;--unk:#a3a8b3}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:920px;margin:0 auto;padding:24px 16px 64px}a{color:var(--acc)}
+header.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+.brand{font-weight:800;font-size:20px;text-decoration:none;color:var(--fg)}.brand span{color:var(--acc)}
+h1{font-size:clamp(26px,4vw,36px);line-height:1.2;margin:8px 0}h2{font-size:21px;margin:36px 0 10px}
+.lead{font-size:18px;color:var(--mut)}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0}
+.chips{display:flex;gap:10px;flex-wrap:wrap}.chipbox{display:flex;flex-direction:column;gap:4px}.chipbox b{font-size:13px;color:var(--mut)}
+.chip{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-weight:600;font-size:14px}
+.chip.ok{color:var(--ok)}.chip.warn{color:var(--warn)}.chip.bad{color:var(--bad)}.chip.unk{color:var(--unk)}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mut);font-weight:600}.scroll{overflow-x:auto}code{font-size:13px;word-break:break-all}
+.small{font-size:13px;color:var(--mut)}.cta{display:inline-block;background:var(--acc);color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600}
+@media (prefers-color-scheme:dark){.cta{color:#14161a}}
+.count{font-size:clamp(28px,6vw,44px);font-weight:800;letter-spacing:-.5px}
+input[type=search]{width:100%;padding:12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-size:16px}
+footer{margin-top:48px;border-top:1px solid var(--line);padding-top:16px;font-size:13px;color:var(--mut)}
+details summary{cursor:pointer;font-weight:600}
+.guide code{word-break:normal;overflow-wrap:anywhere}.lib{border-bottom:1px solid var(--line);padding:4px 0 8px}.lib h3{margin:12px 0 0;overflow-wrap:anywhere}.lib ul{margin:6px 0;padding-left:20px}
+</style></head><body><div class="wrap"><header class="top"><a class="brand" href="/">Leap<span>Check</span></a><nav class="small"><a href="/plugins/">Plugins</a> · <a href="/libraries/">Libraries</a> · <a href="/guides/">Guides</a> · <a href="/about/how-we-scan/">How we scan</a> · <a href="https://github.com/agkartikey575/leapcheck">Open source</a></nav></header><h1>Privacy</h1><p class="small">Last updated: 16 November 2026</p>
+<h2>The short version</h2><ul>
+<li><b>We don't collect your site's content, your users' data, or your name.</b></li>
+<li>The LeapCheck plugin does nothing online until you click its consent button.</li>
+<li>After that, it downloads public result files from this website, one per plugin version. Like any website visit, our hosting provider briefly sees your server's IP address. We don't keep a database of who asked for what.</li>
+<li>This website uses <b>no cookies, no analytics and no advertising trackers</b>.</li></ul>
+<h2>Who we are</h2><p>LeapCheck is an open-source project maintained on GitHub at <a href="https://github.com/agkartikey575/leapcheck">github.com/agkartikey575/leapcheck</a>. For privacy questions, contact the maintainer privately through GitHub.</p>
+<h2>The WordPress plugin</h2><p>To build your report, the plugin reads, on your own server, only the names (slugs) and version numbers of your installed plugins and themes, and your PHP version. Nothing else: no posts, pages, users, orders, emails or settings.</p>
+<p>After you opt in, it requests public files such as <code>/v1/wordpress-plugin/contact-form-7/5.1.json</code>. Each request contains only the slug and version in the address, your server's IP address (which every internet request carries) and a generic label <code>LeapCheck/version</code>. The plugin deliberately replaces WordPress's default request label, which would contain your site's address. We do not receive or store the list of plugins you have.</p>
+<p>You can turn checking off at any time on the plugin's page (Tools → LeapCheck), which also deletes cached results. Deleting the plugin removes all its settings. If a plugin is not in our database, the plugin says so; it never uploads that plugin's code.</p>
+<h2>This website</h2><p>No cookies, no analytics, no advertising or social-media trackers, no third-party fonts or scripts. Our hosting provider (Vercel Inc.) receives standard technical data with each request (IP address, browser type, page and time) to deliver pages and protect against attacks, and keeps short-lived request logs. We don't export or combine them.</p>
+<h2>Legal basis and your rights</h2><p>We process IP addresses and request details under our legitimate interest in delivering the files and pages you ask for and keeping the service secure (Article 6(1)(f) GDPR). You can ask for access, correction, deletion, restriction or objection; because we keep no database of plugin requests, we usually hold nothing that can be linked to you. You can also complain to your data-protection authority.</p>
+<h2>Changes</h2><p>We will update this page before we change what data we process, including before any accounts or paid plans launch. The plugin will ask you again before any new data leaves your site.</p><footer>LeapCheck checks public plugin code for PHP version compatibility with open-source static analysis. Results are automated and are not a guarantee. LeapCheck is not affiliated with WordPress, the WordPress Foundation or any plugin author; names are trademarks of their owners. <a href="/about/how-we-scan/">Methodology and limits</a> · <a href="/privacy/">Privacy</a> · <a href="https://github.com/agkartikey575/leapcheck/issues/new?title=Wrong%20result">Report a wrong result</a></footer></div></body></html>
