@@ -45,7 +45,81 @@ struct Target {
     findings: Vec<(String, String, String, String, String, i64, Option<String>)>, // rule, severity, confidence, message, file, line, component
 }
 
+/// Which WordPress.org directory a package comes from. Plugins and themes live in separate URL
+/// namespaces because a plugin and a theme may share a slug.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Kind {
+    Plugin,
+    Theme,
+}
+
+impl Kind {
+    const ALL: [Kind; 2] = [Kind::Plugin, Kind::Theme];
+    /// Folder under v1/ holding the exported JSON.
+    fn eco(self) -> &'static str {
+        match self { Kind::Plugin => "wordpress-plugin", Kind::Theme => "wordpress-theme" }
+    }
+    /// Site folder and the WordPress.org directory path ("plugins" / "themes").
+    fn dir(self) -> &'static str {
+        match self { Kind::Plugin => "plugins", Kind::Theme => "themes" }
+    }
+    /// Singular noun, also the WordPress.org support-forum path ("plugin" / "theme").
+    fn noun(self) -> &'static str {
+        match self { Kind::Plugin => "plugin", Kind::Theme => "theme" }
+    }
+    fn title(self) -> &'static str {
+        match self { Kind::Plugin => "Plugin", Kind::Theme => "Theme" }
+    }
+    fn plural_title(self) -> &'static str {
+        match self { Kind::Plugin => "Plugins", Kind::Theme => "Themes" }
+    }
+}
+
+/// Which package pages search engines may index (LEAPCHECK_INDEX_PLUGINS at build time; the same
+/// switch covers plugin and theme pages):
+///   "compatible" (default): only compatible pages, the verdict class that passed every accuracy review;
+///   "1"/"all": every page with a verdict (after the full accuracy gate passes); "0"/"none"/other: none.
+/// Directory pages (/plugins/, /themes/ and their pagination) are indexable only in "all".
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum IndexMode {
+    Compatible,
+    All,
+    None,
+}
+
+impl IndexMode {
+    fn parse(v: Option<&str>) -> IndexMode {
+        match v {
+            None | Some("compatible") => IndexMode::Compatible,
+            Some("1") | Some("all") => IndexMode::All,
+            _ => IndexMode::None,
+        }
+    }
+    fn from_env() -> IndexMode {
+        IndexMode::parse(std::env::var("LEAPCHECK_INDEX_PLUGINS").ok().as_deref())
+    }
+    fn allows(self, verdict: &str) -> bool {
+        match self {
+            IndexMode::All => verdict != "unknown",
+            IndexMode::Compatible => verdict == "compatible",
+            IndexMode::None => false,
+        }
+    }
+    fn directories(self) -> bool {
+        self == IndexMode::All
+    }
+}
+
+/// Rows per directory page (/plugins/, /plugins/page/2/, ...), so no page grows huge.
+const DIR_PAGE_SIZE: usize = 500;
+
+/// A slug that is safe to use as a single path segment.
+fn valid_slug(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 200 && !s.starts_with('.') && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+}
+
 struct Pkg {
+    kind: Kind,
     slug: String,
     display: String,
     installs: Option<i64>,
@@ -105,10 +179,10 @@ fn page(title: &str, desc: &str, canonical: &str, noindex: bool, jsonld: &str, b
 <title>{t}</title><meta name=\"description\" content=\"{d}\"><link rel=\"canonical\" href=\"{c}\">{robots}\
 <meta property=\"og:title\" content=\"{t}\"><meta property=\"og:description\" content=\"{d}\"><meta property=\"og:type\" content=\"website\">\
 <style>{css}</style>{jsonld}</head><body><div class=\"wrap\">\
-<header class=\"top\"><a class=\"brand\" href=\"/\">Leap<span>Check</span></a><nav class=\"small\"><a href=\"/plugins/\">Plugins</a> · <a href=\"/libraries/\">Libraries</a> · <a href=\"/guides/\">Guides</a> · <a href=\"/about/how-we-scan/\">How we scan</a> · <a href=\"https://github.com/agkartikey575/leapcheck\">Open source</a></nav></header>\
+<header class=\"top\"><a class=\"brand\" href=\"/\">Leap<span>Check</span></a><nav class=\"small\"><a href=\"/plugins/\">Plugins</a> · <a href=\"/themes/\">Themes</a> · <a href=\"/libraries/\">Libraries</a> · <a href=\"/guides/\">Guides</a> · <a href=\"/about/how-we-scan/\">How we scan</a> · <a href=\"https://github.com/agkartikey575/leapcheck\">Open source</a></nav></header>\
 {body}\
-<footer>LeapCheck checks public plugin code for PHP version compatibility with open-source static analysis. Results are automated and are not a guarantee. \
-LeapCheck is not affiliated with WordPress, the WordPress Foundation or any plugin author; names are trademarks of their owners. \
+<footer>LeapCheck checks public plugin and theme code for PHP version compatibility with open-source static analysis. Results are automated and are not a guarantee. \
+LeapCheck is not affiliated with WordPress, the WordPress Foundation or any plugin or theme author; names are trademarks of their owners. \
 <a href=\"/about/how-we-scan/\">Methodology and limits</a> · <a href=\"/privacy/\">Privacy</a> · <a href=\"https://github.com/agkartikey575/leapcheck/issues/new?title=Wrong%20result\">Report a wrong result</a></footer>\
 </div></body></html>",
         t = esc(title), d = esc(desc), c = esc(canonical), css = CSS,
@@ -120,13 +194,24 @@ LeapCheck is not affiliated with WordPress, the WordPress Foundation or any plug
 /// regenerated from public data alone, e.g. after merging parallel scan shards.
 fn load(out: &Path) -> Result<Vec<Pkg>> {
     let mut pkgs = vec![];
-    let dir = out.join("v1").join("wordpress-plugin");
-    let Ok(rd) = std::fs::read_dir(&dir) else { return Ok(pkgs) };
+    for kind in Kind::ALL {
+        load_kind(out, kind, &mut pkgs)?;
+    }
+    Ok(pkgs)
+}
+
+fn load_kind(out: &Path, kind: Kind, pkgs: &mut Vec<Pkg>) -> Result<()> {
+    let dir = out.join("v1").join(kind.eco());
+    let Ok(rd) = std::fs::read_dir(&dir) else { return Ok(()) };
     for e in rd.flatten() {
         let pdir = e.path();
         let Ok(idx) = std::fs::read_to_string(pdir.join("index.json")) else { continue };
         let idx: serde_json::Value = serde_json::from_str(&idx)?;
         let slug = idx["name"].as_str().unwrap_or_default().to_string();
+        if !valid_slug(&slug) {
+            eprintln!("{}", serde_json::json!({"level": "warn", "step": "site", "msg": "skipping package with invalid slug", "attrs": {"kind": kind.noun(), "dir": pdir.display().to_string()}}));
+            continue;
+        }
         let mut versions: Vec<String> = idx["versions"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
         versions.sort_by(|a, b| crate::detect::ver_cmp(a, b));
         let mut docs = vec![];
@@ -163,24 +248,40 @@ fn load(out: &Path) -> Result<Vec<Pkg>> {
             installs: doc["active_installs"].as_i64(),
             version: doc["version"].as_str().unwrap_or("").to_string(),
             scanned_at: doc["scanned_at"].as_str().unwrap_or("").to_string(),
-            slug, targets, components, requirements, history,
+            kind, slug, targets, components, requirements, history,
         });
     }
-    Ok(pkgs)
+    Ok(())
 }
 
-fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
+/// Whether a package page may be indexed: the gate must allow its verdict, and the page must carry
+/// something of its own (findings, libraries, requirements, history) or be for a popular package.
+fn pkg_indexable(p: &Pkg, mode: IndexMode) -> bool {
+    let main = p.targets.get(MAIN_TARGET);
+    let verdict = main.map(|t| t.verdict.as_str()).unwrap_or("unknown");
+    let has_unique = main.map_or(false, |t| !t.findings.is_empty()) || !p.components.is_empty() || !p.requirements.is_empty() || p.history.len() >= 2;
+    mode.allows(verdict) && (has_unique || p.installs.unwrap_or(0) >= 10_000)
+}
+
+fn pkg_page(p: &Pkg, fixes: &[Fix], base: &str, mode: IndexMode) -> (String, bool) {
+    let kind = p.kind;
+    let noun = kind.noun();
     let main = p.targets.get(MAIN_TARGET);
     let (verdict, e, w) = main.map(|t| (t.verdict.as_str(), t.errors, t.warnings)).unwrap_or(("unknown", 0, 0));
     let date = p.scanned_at.get(..10).unwrap_or("");
     let name = &p.display;
+    // "{name}" for plugins, "{name} theme" for themes; "{name}" / "the {name} theme" in sentences.
+    let (subject, the_subject) = match kind {
+        Kind::Plugin => (name.clone(), name.clone()),
+        Kind::Theme => (format!("{name} theme"), format!("the {name} theme")),
+    };
     let es = if e == 1 { "1 error".to_string() } else { format!("{e} errors") };
     let ws = if w == 1 { "1 warning".to_string() } else { format!("{w} warnings") };
     let title = match verdict {
-        "compatible" => format!("Is {name} compatible with PHP 8.4? Yes, v{} | LeapCheck", p.version),
-        "issues" => format!("Is {name} compatible with PHP 8.4? Runs, {ws} | LeapCheck"),
-        "breaks" => format!("Is {name} compatible with PHP 8.4? {es} found | LeapCheck"),
-        _ => format!("{name} PHP 8.4 compatibility: not scannable | LeapCheck"),
+        "compatible" => format!("Is {subject} compatible with PHP 8.4? Yes, v{} | LeapCheck", p.version),
+        "issues" => format!("Is {subject} compatible with PHP 8.4? Runs, {ws} | LeapCheck"),
+        "breaks" => format!("Is {subject} compatible with PHP 8.4? {es} found | LeapCheck"),
+        _ => format!("{subject} PHP 8.4 compatibility: not scannable | LeapCheck"),
     };
     let plain = match verdict {
         "compatible" => "no problems found",
@@ -188,43 +289,34 @@ fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
         "breaks" => "errors found that can stop it working",
         _ => "could not be fully scanned",
     };
-    let desc = format!("{name} {} on PHP 8.4: {plain}. {es}, {ws} from a static scan on {date}. See files, lines and fixes, plus PHP 8.3 and 8.5.", p.version);
-    let has_unique = main.map_or(false, |t| !t.findings.is_empty()) || !p.components.is_empty() || !p.requirements.is_empty() || p.history.len() >= 2;
-    // Which plugin pages search engines may index (LEAPCHECK_INDEX_PLUGINS at build time):
-    //   "compatible" (default): only compatible pages, the verdict class that passed every accuracy review;
-    //   "1"/"all": every page with a verdict (after the full accuracy gate passes); "0"/"none": none.
-    let mode = std::env::var("LEAPCHECK_INDEX_PLUGINS").unwrap_or_else(|_| "compatible".into());
-    let gate_open = match mode.as_str() {
-        "1" | "all" => verdict != "unknown",
-        "compatible" => verdict == "compatible",
-        _ => false,
-    };
-    let index = gate_open && (has_unique || p.installs.unwrap_or(0) >= 10_000);
-    let canonical = format!("{base}/plugins/{}/", p.slug);
+    let desc = format!("{subject} {} on PHP 8.4: {plain}. {es}, {ws} from a static scan on {date}. See files, lines and fixes, plus PHP 8.3 and 8.5.", p.version);
+    let index = pkg_indexable(p, mode);
+    let canonical = format!("{base}/{}/{}/", kind.dir(), p.slug);
 
     let mut b = String::new();
-    let _ = write!(b, "<p class=\"small\"><a href=\"/\">Home</a> › <a href=\"/plugins/\">Plugins</a> › {}</p>", esc(name));
-    let _ = write!(b, "<h1>Is {} compatible with PHP 8.4?</h1>", esc(name));
+    let _ = write!(b, "<p class=\"small\"><a href=\"/\">Home</a> › <a href=\"/{}/\">{}</a> › {}</p>", kind.dir(), kind.plural_title(), esc(name));
+    let _ = write!(b, "<h1>Is {} compatible with PHP 8.4?</h1>", esc(&the_subject));
     let answer = match verdict {
-        "compatible" => format!("Version {} of {} showed no PHP 8.4 compatibility problems in our static scan of {date}.", esc(&p.version), esc(name)),
-        "unknown" => format!("Version {} of {} contains code we could not scan (for example encoded files), so we can't give a verdict.", esc(&p.version), esc(name)),
-        _ => format!("Version {} of {} has {es} and {ws} on PHP 8.4 in our static scan of {date}.", esc(&p.version), esc(name)),
+        "compatible" => format!("Version {} of {} showed no PHP 8.4 compatibility problems in our static scan of {date}.", esc(&p.version), esc(&the_subject)),
+        "unknown" => format!("Version {} of {} contains code we could not scan (for example encoded files), so we can't give a verdict.", esc(&p.version), esc(&the_subject)),
+        _ => format!("Version {} of {} has {es} and {ws} on PHP 8.4 in our static scan of {date}.", esc(&p.version), esc(&the_subject)),
     };
     let _ = write!(b, "<p class=\"lead\">{answer}</p><div class=\"card\"><div class=\"chips\">");
     for t in TARGETS {
         let v = p.targets.get(t).map(|x| x.verdict.as_str()).unwrap_or("unknown");
         let _ = write!(b, "<div class=\"chipbox\"><b>PHP {}</b>{}</div>", &t[4..], chip(v));
     }
-    let _ = write!(b, "</div><p class=\"small\">Version scanned: {} · Scanned: {date} · <a href=\"/v1/wordpress-plugin/{}/{}.json\">Raw data (JSON)</a> · This is an automated static scan, not a guarantee. <a href=\"/about/how-we-scan/\">How we scan</a></p></div>",
-        esc(&p.version), esc(&p.slug), esc(&p.version));
+    let _ = write!(b, "</div><p class=\"small\">Version scanned: {} · Scanned: {date} · <a href=\"/v1/{}/{}/{}.json\">Raw data (JSON)</a> · This is an automated static scan, not a guarantee. <a href=\"/about/how-we-scan/\">How we scan</a></p></div>",
+        esc(&p.version), kind.eco(), esc(&p.slug), esc(&p.version));
 
     // What this means
-    let _ = write!(b, "<h2>What this means for you</h2><p>{}</p>", match verdict {
-        "compatible" => "We found no code in this version that is known to break or be deprecated on PHP 8.4. Still test your whole site on a staging copy before upgrading.",
-        "issues" => "The plugin should keep running on PHP 8.4, but it uses features PHP has deprecated. Deprecations don't stop your site today; they can become errors in a later PHP version, and they may fill your error log.",
-        "breaks" => "This version uses code that newer PHP versions removed or changed. Depending on which feature is used, a page or the whole site can stop with an error after upgrading. Check the findings below, especially any inside bundled libraries.",
-        _ => "Part of this plugin's code is encoded or otherwise unreadable to our scanner, so we can't tell. Ask the plugin's author whether it supports PHP 8.4.",
-    });
+    let meaning = match verdict {
+        "compatible" => "We found no code in this version that is known to break or be deprecated on PHP 8.4. Still test your whole site on a staging copy before upgrading.".to_string(),
+        "issues" => format!("The {noun} should keep running on PHP 8.4, but it uses features PHP has deprecated. Deprecations don't stop your site today; they can become errors in a later PHP version, and they may fill your error log."),
+        "breaks" => "This version uses code that newer PHP versions removed or changed. Depending on which feature is used, a page or the whole site can stop with an error after upgrading. Check the findings below, especially any inside bundled libraries.".to_string(),
+        _ => format!("Part of this {noun}'s code is encoded or otherwise unreadable to our scanner, so we can't tell. Ask the {noun}'s author whether it supports PHP 8.4."),
+    };
+    let _ = write!(b, "<h2>What this means for you</h2><p>{meaning}</p>");
 
     // Findings grouped by rule
     if let Some(t) = main {
@@ -255,7 +347,7 @@ fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
         }
     }
     if !p.components.is_empty() {
-        let _ = write!(b, "<h2>Hidden libraries bundled inside</h2><p>Plugins often ship their own copies of other libraries. Old copies are a common reason sites break during PHP upgrades.</p><div class=\"scroll\"><table><tr><th>Library</th><th>Version</th><th>Location</th><th>Known vulnerabilities</th></tr>");
+        let _ = write!(b, "<h2>Hidden libraries bundled inside</h2><p>{} often ship their own copies of other libraries. Old copies are a common reason sites break during PHP upgrades.</p><div class=\"scroll\"><table><tr><th>Library</th><th>Version</th><th>Location</th><th>Known vulnerabilities</th></tr>", kind.plural_title());
         for (n, v, path, det, vul) in &p.components {
             let _ = write!(b, "<tr><td><a href=\"/libraries/#{}\">{}</a></td><td>{}</td><td><code>{}</code></td><td>{}</td></tr>", lib_anchor(n), esc(n), esc(v.as_deref().unwrap_or("unknown")), esc(path),
                 if *vul > 0 { format!("{vul} (per <a href=\"https://github.com/RetireJS/retire.js\">RetireJS</a> data)") } else if det == "retirejs" { "None known".into() } else { "—".into() });
@@ -276,10 +368,14 @@ fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
         }
         let _ = write!(b, "</ul>");
     }
-    let _ = write!(b, "<h2>What to do next</h2><ol><li>Update {} to its newest version, then check again.</li><li>Test the upgrade on a staging copy of your site first.</li><li>If problems remain, ask the author in the plugin's <a href=\"https://wordpress.org/support/plugin/{}/\">support forum</a>.</li></ol>\
+    let update = match kind {
+        Kind::Plugin => format!("Update {} to its newest version, then check again.", esc(name)),
+        Kind::Theme => format!("Update the {} theme to its newest version, then check again.", esc(name)),
+    };
+    let _ = write!(b, "<h2>What to do next</h2><ol><li>{update}</li><li>Test the upgrade on a staging copy of your site first.</li><li>If problems remain, ask the author in the {noun}'s <a href=\"https://wordpress.org/support/{noun}/{}/\">support forum</a>.</li></ol>\
 <div class=\"card\"><b>Check your whole site in seconds.</b> The free LeapCheck plugin checks every plugin and theme you have installed against PHP 8.3, 8.4 and 8.5. <p><a class=\"cta\" href=\"/get/\">Get the free plugin</a></p></div>",
-        esc(name), esc(&p.slug));
-    let _ = write!(b, "<p class=\"small\">Not affiliated with the author of {}. Results are generated automatically from the public code of version {}. Last updated {date}.</p>", esc(name), esc(&p.version));
+        esc(&p.slug));
+    let _ = write!(b, "<p class=\"small\">Not affiliated with the author of {}. Results are generated automatically from the public code of version {}. Last updated {date}.</p>", esc(&the_subject), esc(&p.version));
 
     let jsonld = format!(
         "<script type=\"application/ld+json\">{}</script>",
@@ -288,15 +384,67 @@ fn plugin_page(p: &Pkg, fixes: &[Fix], base: &str) -> (String, bool) {
             "@graph": [
                 {"@type": "WebPage", "name": title, "url": canonical, "dateModified": p.scanned_at,
                  "about": {"@type": "SoftwareApplication", "name": name, "softwareVersion": p.version, "applicationCategory": "WebApplication",
-                           "url": format!("https://wordpress.org/plugins/{}/", p.slug)}},
+                           "url": format!("https://wordpress.org/{}/{}/", kind.dir(), p.slug)}},
                 {"@type": "BreadcrumbList", "itemListElement": [
                     {"@type": "ListItem", "position": 1, "name": "Home", "item": format!("{base}/")},
-                    {"@type": "ListItem", "position": 2, "name": "Plugins", "item": format!("{base}/plugins/")},
+                    {"@type": "ListItem", "position": 2, "name": kind.plural_title(), "item": format!("{base}/{}/", kind.dir())},
                     {"@type": "ListItem", "position": 3, "name": name, "item": canonical}]}
             ]
-        }).to_string().replace("</", "<\\/")
+        }).to_string().replace('<', "\\u003c")
     );
     (page(&title, &desc, &canonical, !index, &jsonld, &b), index)
+}
+
+/// Directory pages for one kind: `{dir}/index.html` lists the top DIR_PAGE_SIZE packages by
+/// active installs (`pkgs` must already be sorted), `{dir}/page/{n}/index.html` the rest.
+/// Returns (file path, site path, html) per page.
+fn directory_pages(pkgs: &[&Pkg], kind: Kind, base: &str, mode: IndexMode) -> Vec<(String, String, String)> {
+    let total = pkgs.len();
+    let pages = total.div_ceil(DIR_PAGE_SIZE).max(1);
+    let url = |n: usize| if n == 1 { format!("/{}/", kind.dir()) } else { format!("/{}/page/{n}/", kind.dir()) };
+    let (title, desc) = match kind {
+        Kind::Plugin => ("WordPress plugin PHP 8.4 compatibility results", "Which WordPress plugins work on PHP 8.3, 8.4 and 8.5? Automated static scans of public plugin code, with files, lines and fixes."),
+        Kind::Theme => ("WordPress theme PHP 8.4 compatibility results", "Which WordPress themes work on PHP 8.3, 8.4 and 8.5? Automated static scans of public theme code, with files, lines and fixes."),
+    };
+    let mut out = vec![];
+    for n in 1..=pages {
+        let chunk = &pkgs[((n - 1) * DIR_PAGE_SIZE).min(total)..(n * DIR_PAGE_SIZE).min(total)];
+        let mut rows = String::new();
+        for p in chunk {
+            let v = p.targets.get(MAIN_TARGET).map(|t| t.verdict.as_str()).unwrap_or("unknown");
+            let _ = write!(rows, "<tr><td><a href=\"/{}/{}/\">{}</a></td><td>{}</td><td>{}</td></tr>", kind.dir(), esc(&p.slug), esc(&p.display), esc(&p.version), chip(v));
+        }
+        let mut b = String::new();
+        if n > 1 {
+            let _ = write!(b, "<p class=\"small\"><a href=\"/\">Home</a> › <a href=\"/{}/\">{}</a> › Page {n}</p>", kind.dir(), kind.plural_title());
+        }
+        let _ = write!(b, "<h1>{} PHP compatibility results{}</h1><p class=\"lead\">{total} {}s checked against PHP 8.3, 8.4 and 8.5. More are added every night.</p>",
+            kind.title(), if n > 1 { format!(", page {n}") } else { String::new() }, kind.noun());
+        if total == 0 {
+            let _ = write!(b, "<p>No {}s scanned yet.</p>", kind.noun());
+        } else {
+            if pages > 1 {
+                let _ = write!(b, "<p class=\"small\">Sorted by active installs. Showing {}–{} of {total}.</p>", (n - 1) * DIR_PAGE_SIZE + 1, (n - 1) * DIR_PAGE_SIZE + chunk.len());
+            }
+            let _ = write!(b, "<div class=\"scroll\"><table><tr><th>{}</th><th>Version</th><th>PHP 8.4</th></tr>{rows}</table></div>", kind.title());
+        }
+        if pages > 1 {
+            b.push_str("<nav class=\"small\" aria-label=\"Pages\"><p>");
+            if n > 1 {
+                let _ = write!(b, "<a href=\"{}\" rel=\"prev\">‹ Previous</a> · ", url(n - 1));
+            }
+            let links: Vec<String> = (1..=pages).map(|k| if k == n { format!("<b>{k}</b>") } else { format!("<a href=\"{}\">{k}</a>", url(k)) }).collect();
+            b.push_str(&links.join(" "));
+            if n < pages {
+                let _ = write!(b, " · <a href=\"{}\" rel=\"next\">Next ›</a>", url(n + 1));
+            }
+            b.push_str("</p></nav>");
+        }
+        let t = if n > 1 { format!("{title}, page {n} | LeapCheck") } else { format!("{title} | LeapCheck") };
+        let file = if n == 1 { format!("{}/index.html", kind.dir()) } else { format!("{}/page/{n}/index.html", kind.dir()) };
+        out.push((file, url(n), page(&t, desc, &format!("{base}{}", url(n)), !mode.directories(), "", &b)));
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -614,7 +762,7 @@ fn lib_anchor(name: &str) -> String {
 
 #[derive(Default)]
 struct LibVersion {
-    plugins: BTreeMap<String, String>, // slug -> display name
+    plugins: BTreeMap<(Kind, String), String>, // (kind, slug) -> display name
     vulns: i64,
     vuln_checked: bool, // true when the version was matched against RetireJS data
 }
@@ -624,24 +772,28 @@ fn library_page(pkgs: &[Pkg], base: &str) -> (String, bool) {
     for p in pkgs {
         for (n, v, _path, det, vul) in &p.components {
             let lv = libs.entry(n.clone()).or_default().entry(v.clone().unwrap_or_else(|| "unknown".into())).or_default();
-            lv.plugins.insert(p.slug.clone(), p.display.clone());
+            lv.plugins.insert((p.kind, p.slug.clone()), p.display.clone());
             lv.vulns = lv.vulns.max(*vul);
             lv.vuln_checked |= det == "retirejs";
         }
     }
     let plugin_count = |vs: &BTreeMap<String, LibVersion>| vs.values().flat_map(|lv| lv.plugins.keys()).collect::<std::collections::BTreeSet<_>>().len();
+    let kind_count = |vs: &BTreeMap<String, LibVersion>, k: Kind| vs.values().flat_map(|lv| lv.plugins.keys()).filter(|(pk, _)| *pk == k).collect::<std::collections::BTreeSet<_>>().len();
+    let n_plugins = pkgs.iter().filter(|p| p.kind == Kind::Plugin).count();
+    let n_themes = pkgs.len() - n_plugins;
+    let scanned = if n_themes == 0 { format!("{n_plugins} plugins") } else { format!("{n_plugins} plugins and {n_themes} themes") };
     let mut order: Vec<(&String, &BTreeMap<String, LibVersion>)> = libs.iter().collect();
     order.sort_by(|a, b| plugin_count(b.1).cmp(&plugin_count(a.1)).then(a.0.to_lowercase().cmp(&b.0.to_lowercase())));
     let with_vulns = libs.values().filter(|vs| vs.values().any(|lv| lv.vulns > 0)).count();
-    let index = pkgs.len() >= LIBRARY_INDEX_MIN_PLUGINS;
+    let index = n_plugins >= LIBRARY_INDEX_MIN_PLUGINS;
     let canonical = format!("{base}/libraries/");
 
     let mut b = String::new();
-    let _ = write!(b, "<p class=\"small\"><a href=\"/\">Home</a> › Libraries</p><h1>Hidden libraries inside WordPress plugins</h1>\
-<p class=\"lead\">Plugins often ship their own copies of other libraries. Old copies are a common reason sites break during PHP upgrades, and some carry known vulnerabilities. \
-We found <b>{}</b> different libraries bundled in the latest scanned version of {} plugins; <b>{with_vulns}</b> of them have at least one copy with known vulnerabilities.</p>\
+    let _ = write!(b, "<p class=\"small\"><a href=\"/\">Home</a> › Libraries</p><h1>Hidden libraries inside WordPress plugins and themes</h1>\
+<p class=\"lead\">Plugins and themes often ship their own copies of other libraries. Old copies are a common reason sites break during PHP upgrades, and some carry known vulnerabilities. \
+We found <b>{}</b> different libraries bundled in the latest scanned version of {scanned}; <b>{with_vulns}</b> of them have at least one copy with known vulnerabilities.</p>\
 <p class=\"small\">Found by package manifests, file signatures and <a href=\"https://github.com/RetireJS/retire.js\">RetireJS</a> open data. Vulnerability counts come from RetireJS data and are only available for JavaScript libraries; no count shown means not checked, not “safe”. <a href=\"/about/how-we-scan/\">How we scan</a></p>",
-        libs.len(), pkgs.len());
+        libs.len());
     if libs.is_empty() {
         b.push_str("<p>No bundled libraries found yet.</p>");
     } else {
@@ -649,11 +801,17 @@ We found <b>{}</b> different libraries bundled in the latest scanned version of 
         for (name, versions) in &order {
             let mut vs: Vec<(&String, &LibVersion)> = versions.iter().collect();
             vs.sort_by(|a, b| crate::detect::ver_cmp(b.0, a.0));
-            let pc = plugin_count(versions);
-            let _ = write!(b, "<section class=\"lib\" id=\"{}\"><h3>{}</h3><p class=\"small\">Bundled by {pc} plugin{}, {} version{} seen</p><ul>",
-                lib_anchor(name), esc(name), if pc == 1 { "" } else { "s" }, vs.len(), if vs.len() == 1 { "" } else { "s" });
+            let (pc, tc) = (kind_count(versions, Kind::Plugin), kind_count(versions, Kind::Theme));
+            let by = match (pc, tc) {
+                (p, 0) => format!("{p} plugin{}", if p == 1 { "" } else { "s" }),
+                (0, t) => format!("{t} theme{}", if t == 1 { "" } else { "s" }),
+                (p, t) => format!("{p} plugin{} and {t} theme{}", if p == 1 { "" } else { "s" }, if t == 1 { "" } else { "s" }),
+            };
+            let _ = write!(b, "<section class=\"lib\" id=\"{}\"><h3>{}</h3><p class=\"small\">Bundled by {by}, {} version{} seen</p><ul>",
+                lib_anchor(name), esc(name), vs.len(), if vs.len() == 1 { "" } else { "s" });
             for (v, lv) in &vs {
-                let plugins: Vec<String> = lv.plugins.iter().map(|(s, d)| format!("<a href=\"/plugins/{}/\">{}</a>", esc(s), esc(d))).collect();
+                let plugins: Vec<String> = lv.plugins.iter().map(|((k, s), d)| format!("<a href=\"/{}/{}/\">{}</a>{}", k.dir(), esc(s), esc(d),
+                    if *k == Kind::Theme { " <span class=\"small\">(theme)</span>" } else { "" })).collect();
                 let vul = if lv.vulns > 0 {
                     format!(" <span class=\"chip bad\">{} known vulnerabilit{}</span>", lv.vulns, if lv.vulns == 1 { "y" } else { "ies" })
                 } else if lv.vuln_checked { " <span class=\"small\">(no known vulnerabilities)</span>".into() } else { String::new() };
@@ -662,9 +820,9 @@ We found <b>{}</b> different libraries bundled in the latest scanned version of 
             b.push_str("</ul></section>");
         }
     }
-    let _ = write!(b, "<p class=\"small\">Library names are as detected and may be trademarks of their owners. A library listed here is not necessarily used in a vulnerable way by the plugin.</p>");
-    let title = "Hidden libraries bundled in WordPress plugins | LeapCheck";
-    let desc = format!("{} libraries found bundled inside {} scanned WordPress plugins, with versions, which plugins ship them and known vulnerabilities.", libs.len(), pkgs.len());
+    let _ = write!(b, "<p class=\"small\">Library names are as detected and may be trademarks of their owners. A library listed here is not necessarily used in a vulnerable way by the plugin or theme.</p>");
+    let title = "Hidden libraries bundled in WordPress plugins and themes | LeapCheck";
+    let desc = format!("{} libraries found bundled inside {scanned} scanned on WordPress.org, with versions, which packages ship them and known vulnerabilities.", libs.len());
     (page(title, &desc, &canonical, !index, "", &b), index)
 }
 
@@ -678,31 +836,35 @@ fn write(out: &Path, rel: &str, content: &str) -> Result<()> {
 }
 
 pub fn generate(rules: &Path, out: &Path, base: &str) -> Result<usize> {
+    generate_with(rules, out, base, IndexMode::from_env())
+}
+
+fn generate_with(rules: &Path, out: &Path, base: &str, mode: IndexMode) -> Result<usize> {
     let base = base.trim_end_matches('/');
     let fixes: Vec<Fix> = std::fs::read_to_string(rules.join("fix-dictionary.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let mut pkgs = load(out)?;
-    pkgs.sort_by(|a, b| b.installs.unwrap_or(0).cmp(&a.installs.unwrap_or(0)).then(a.slug.cmp(&b.slug)));
+    pkgs.sort_by(|a, b| b.installs.unwrap_or(0).cmp(&a.installs.unwrap_or(0)).then(a.slug.cmp(&b.slug)).then(a.kind.cmp(&b.kind)));
     let mut n = 0;
-    let gate_open = std::env::var("LEAPCHECK_INDEX_PLUGINS").map_or(false, |v| v == "1");
     let mut sitemap = vec![(format!("{base}/"), String::new()), (format!("{base}/about/how-we-scan/"), String::new())];
-    if gate_open {
-        sitemap.push((format!("{base}/plugins/"), String::new()));
-    }
-    let mut rows = String::new();
-    for p in &pkgs {
-        let (html, index) = plugin_page(p, &fixes, base);
-        write(out, &format!("plugins/{}/index.html", p.slug), &html)?;
-        n += 1;
-        if index {
-            sitemap.push((format!("{base}/plugins/{}/", p.slug), p.scanned_at.get(..10).unwrap_or("").to_string()));
+    for kind in Kind::ALL {
+        let of_kind: Vec<&Pkg> = pkgs.iter().filter(|p| p.kind == kind).collect();
+        // Directory pages (paginated), indexable only when every verdict class is.
+        for (file, url, html) in directory_pages(&of_kind, kind, base, mode) {
+            write(out, &file, &html)?;
+            n += 1;
+            if mode.directories() {
+                sitemap.push((format!("{base}{url}"), String::new()));
+            }
         }
-        let v = p.targets.get(MAIN_TARGET).map(|t| t.verdict.as_str()).unwrap_or("unknown");
-        let _ = write!(rows, "<tr><td><a href=\"/plugins/{}/\">{}</a></td><td>{}</td><td>{}</td></tr>", esc(&p.slug), esc(&p.display), esc(&p.version), chip(v));
+        for p in &of_kind {
+            let (html, index) = pkg_page(p, &fixes, base, mode);
+            write(out, &format!("{}/{}/index.html", kind.dir(), p.slug), &html)?;
+            n += 1;
+            if index {
+                sitemap.push((format!("{base}/{}/{}/", kind.dir(), p.slug), p.scanned_at.get(..10).unwrap_or("").to_string()));
+            }
+        }
     }
-    // Plugin directory page
-    let list = format!("<h1>Plugin PHP compatibility results</h1><p class=\"lead\">{} plugins checked against PHP 8.3, 8.4 and 8.5. More are added every night.</p><div class=\"scroll\"><table><tr><th>Plugin</th><th>Version</th><th>PHP 8.4</th></tr>{rows}</table></div>", pkgs.len());
-    write(out, "plugins/index.html", &page("WordPress plugin PHP 8.4 compatibility results | LeapCheck", "Which WordPress plugins work on PHP 8.3, 8.4 and 8.5? Automated static scans of public plugin code, with files, lines and fixes.", &format!("{base}/plugins/"), !gate_open, "", &list))?;
-    n += 1;
 
     // Guides (editorial Markdown); a missing folder simply means no guides yet.
     let guides = load_guides(Path::new(GUIDES_DIR));
@@ -734,20 +896,27 @@ pub fn generate(rules: &Path, out: &Path, base: &str) -> Result<usize> {
     }
 
     // Home
-    let counts = pkgs.iter().fold([0usize; 4], |mut c, p| {
+    let counts = |kind: Kind| pkgs.iter().filter(|p| p.kind == kind).fold([0usize; 5], |mut c, p| {
         match p.targets.get(MAIN_TARGET).map(|t| t.verdict.as_str()).unwrap_or("unknown") {
             "compatible" => c[0] += 1,
             "issues" => c[1] += 1,
             "breaks" => c[2] += 1,
             _ => c[3] += 1,
         }
+        c[4] += 1;
         c
     });
+    let summary = |kind: Kind| {
+        let c = counts(kind);
+        format!("<li>{}: <b>{}</b> compatible, <b>{}</b> run with warnings, <b>{}</b> have errors, <b>{}</b> couldn't be scanned. <a href=\"/{}/\">See all {} results</a></li>",
+            kind.plural_title(), c[0], c[1], c[2], c[3], kind.dir(), kind.noun())
+    };
+    let (tp, tt) = (counts(Kind::Plugin)[4], counts(Kind::Theme)[4]);
     let home = format!(r#"<h1>Check before you leap.</h1>
 <p class="lead">PHP 8.2 stops getting security fixes on 31 December 2026, and hosts are moving sites to newer PHP. LeapCheck tells you which of your plugins will break on PHP 8.3, 8.4 and 8.5, before you upgrade, including old libraries hidden inside them.</p>
 <div class="card"><div class="small">PHP 8.2 security support ends in</div><div class="count" id="cd">…</div>{eol}</div>
 <div class="card"><label for="q"><b>Is your plugin ready?</b> Type its WordPress.org slug (the folder name, e.g. <code>contact-form-7</code>)</label><p><input type="search" id="q" placeholder="plugin-slug" autocomplete="off"></p><div id="res" class="small"></div></div>
-<h2>What we've checked so far</h2><p>{total} plugins scanned for PHP 8.4: <b>{c0}</b> compatible, <b>{c1}</b> run with warnings, <b>{c2}</b> have errors, <b>{c3}</b> couldn't be scanned. <a href="/plugins/">See all results</a></p>
+<h2>What we've checked so far</h2><p>{tp} plugins and {tt} themes scanned for PHP 8.4:</p><ul>{sp}{st}</ul>
 <div class="card"><b>Check your whole site at once.</b> The free LeapCheck plugin checks every plugin and theme you have installed. It only looks up public plugin names and versions, only after you agree, and sends nothing about your site.<p><a class="cta" href="/get/">Get the free plugin</a></p></div>
 <script>
 (function(){{var d=new Date("{DEADLINE}"),el=document.getElementById("cd");function t(){{var s=Math.max(0,(d-new Date())/1000|0);el.textContent=s?Math.floor(s/86400)+" days "+Math.floor(s%86400/3600)+" hours":"Support has ended";}}t();setInterval(t,60000);
@@ -756,7 +925,7 @@ function go(){{var s=q.value.trim().toLowerCase();if(!/^[a-z0-9][a-z0-9-]{{0,199
 fetch("/v1/wordpress-plugin/"+s+"/index.json").then(function(x){{if(!x.ok)throw 0;return x.json();}}).then(function(i){{r.innerHTML='Found: <a href="/plugins/'+s+'/">'+s+' (version '+i.latest+')</a>';}}).catch(function(){{r.textContent="Not in our database yet. Popular plugins are added first; check back soon.";}});}}}})();
 </script>"#,
         eol = eol_guide(&guides).map(|g| format!("<p class=\"small\"><a href=\"/guides/{}/\">What PHP 8.2 end of life means for your site</a></p>", esc(&g.slug))).unwrap_or_default(),
-        total = pkgs.len(), c0 = counts[0], c1 = counts[1], c2 = counts[2], c3 = counts[3]);
+        sp = summary(Kind::Plugin), st = summary(Kind::Theme));
     write(out, "index.html", &page("Will your WordPress site break on PHP 8.4? | LeapCheck", "Check which plugins break on PHP 8.3, 8.4 and 8.5 before PHP 8.2 support ends on 31 Dec 2026. Free, automated, open source.", &format!("{base}/"), false, "", &home))?;
     n += 1;
 
@@ -871,5 +1040,230 @@ mod tests {
         assert!(parse_guide("x", "no front matter").is_none());
         assert_eq!(iso_date("2026-11-16"), "2026-11-16");
         assert_eq!(iso_date("soon"), "");
+    }
+
+    // ---- theme pages, indexing gate, pagination ------------------------------------------------
+
+    fn tmp_out(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("leapcheck-site-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Write one exported package (index.json + one version document) as `leapcheck export` does.
+    fn fixture(out: &Path, kind: Kind, slug: &str, display: &str, version: &str, verdict: &str, installs: i64) {
+        let d = out.join("v1").join(kind.eco()).join(slug);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("index.json"), serde_json::json!({"name": slug, "versions": [version], "latest": version}).to_string()).unwrap();
+        let (errors, findings) = if verdict == "breaks" {
+            (1, serde_json::json!([{"rule_id": "PHPCompatibility.X.Removed", "severity": "error", "confidence": "high", "message": "m", "file": "a.php", "line": 3}]))
+        } else {
+            (0, serde_json::json!([]))
+        };
+        let t = serde_json::json!({"verdict": verdict, "errors": errors, "warnings": 0, "findings": findings});
+        std::fs::write(d.join(format!("{version}.json")), serde_json::json!({
+            "name": slug, "version": version, "display_name": display, "active_installs": installs,
+            "scanned_at": "2026-11-20T10:00:00Z", "targets": {"php:8.3": t, "php:8.4": t, "php:8.5": t},
+            "components": [{"name": "jQuery", "version": "1.12.4", "path": "js/jquery.js", "detection": "retirejs", "known_vulnerabilities": 2}],
+            "requirements": [],
+        }).to_string()).unwrap();
+    }
+
+    fn read(out: &Path, rel: &str) -> String {
+        std::fs::read_to_string(out.join(rel)).unwrap_or_else(|_| panic!("missing {rel}"))
+    }
+
+    fn synthetic(kind: Kind, slug: &str, verdict: &str, installs: i64, unique: bool) -> Pkg {
+        let mut targets = BTreeMap::new();
+        targets.insert(MAIN_TARGET.to_string(), Target { verdict: verdict.into(), errors: 0, warnings: 0, findings: vec![] });
+        Pkg {
+            kind, slug: slug.into(), display: slug.into(), installs: Some(installs), version: "1.0".into(), scanned_at: "2026-11-20".into(), targets,
+            components: if unique { vec![("x".into(), None, "p".into(), "signature".into(), 0)] } else { vec![] },
+            requirements: vec![], history: vec![],
+        }
+    }
+
+    #[test]
+    fn index_mode_parsing() {
+        assert_eq!(IndexMode::parse(None), IndexMode::Compatible);
+        assert_eq!(IndexMode::parse(Some("compatible")), IndexMode::Compatible);
+        assert_eq!(IndexMode::parse(Some("all")), IndexMode::All);
+        assert_eq!(IndexMode::parse(Some("1")), IndexMode::All);
+        assert_eq!(IndexMode::parse(Some("none")), IndexMode::None);
+        assert_eq!(IndexMode::parse(Some("0")), IndexMode::None);
+        assert_eq!(IndexMode::parse(Some("yes please")), IndexMode::None);
+    }
+
+    #[test]
+    fn gate_is_the_same_for_plugins_and_themes() {
+        for kind in Kind::ALL {
+            let ok = synthetic(kind, "a", "compatible", 0, true);
+            let bad = synthetic(kind, "b", "breaks", 0, true);
+            let unk = synthetic(kind, "c", "unknown", 1_000_000, true);
+            let thin = synthetic(kind, "d", "compatible", 10, false); // nothing of its own, few installs
+            let popular = synthetic(kind, "e", "compatible", 10_000, false);
+            let idx = |p: &Pkg, m| pkg_indexable(p, m);
+            assert!(idx(&ok, IndexMode::Compatible) && !idx(&bad, IndexMode::Compatible));
+            assert!(idx(&ok, IndexMode::All) && idx(&bad, IndexMode::All));
+            assert!(!idx(&ok, IndexMode::None) && !idx(&bad, IndexMode::None));
+            for m in [IndexMode::Compatible, IndexMode::All, IndexMode::None] {
+                assert!(!idx(&unk, m), "unknown verdicts are never indexable");
+                assert!(!idx(&thin, m));
+                // The robots tag agrees with the decision.
+                let (html, i) = pkg_page(&bad, &[], "https://x.test", m);
+                assert_eq!(html.contains("noindex"), !i);
+            }
+            assert!(idx(&popular, IndexMode::Compatible));
+        }
+    }
+
+    #[test]
+    fn plugin_and_theme_with_same_slug_get_separate_pages() {
+        let out = tmp_out("same-slug");
+        fixture(&out, Kind::Plugin, "shared", "Shared Plugin", "2.0", "compatible", 5000);
+        fixture(&out, Kind::Theme, "shared", "Shared Theme", "1.1", "breaks", 9000);
+        generate_with(Path::new("/nonexistent"), &out, "https://x.test/", IndexMode::Compatible).unwrap();
+
+        let plugin = read(&out, "plugins/shared/index.html");
+        let theme = read(&out, "themes/shared/index.html");
+        assert!(plugin.contains("Is Shared Plugin compatible with PHP 8.4?"));
+        assert!(!plugin.contains("wordpress-theme") && !plugin.contains("wordpress.org/themes/") && !plugin.contains("Shared Theme"));
+
+        assert!(theme.contains("<title>Is Shared Theme theme compatible with PHP 8.4? 1 error found | LeapCheck</title>"));
+        assert!(theme.contains("<h1>Is the Shared Theme theme compatible with PHP 8.4?</h1>"));
+        assert!(theme.contains("<a href=\"/\">Home</a> › <a href=\"/themes/\">Themes</a> › Shared Theme"));
+        assert!(theme.contains("href=\"/v1/wordpress-theme/shared/1.1.json\""));
+        assert!(theme.contains("\"url\":\"https://wordpress.org/themes/shared/\""));
+        assert!(theme.contains("\"item\":\"https://x.test/themes/\",\"name\":\"Themes\",\"position\":2"));
+        assert!(theme.contains("https://wordpress.org/support/theme/shared/"));
+        assert!(theme.contains("Update the Shared Theme theme to its newest version"));
+        assert!(theme.contains("Not affiliated with the author of the Shared Theme theme."));
+        assert!(theme.contains("<link rel=\"canonical\" href=\"https://x.test/themes/shared/\">"));
+        assert!(!theme.contains("/plugins/shared/") && !theme.contains("wordpress-plugin/"));
+        assert!(theme.contains("noindex"), "breaks verdict is noindex under the default gate");
+
+        // Nothing theme-related under plugins/.
+        for e in walkdir::WalkDir::new(out.join("plugins")).into_iter().flatten().filter(|e| e.file_type().is_file()) {
+            let s = std::fs::read_to_string(e.path()).unwrap();
+            assert!(!s.contains("Shared Theme") && !s.contains("/themes/shared/"), "{}", e.path().display());
+        }
+        // Directories, nav, home, libraries.
+        let tdir = read(&out, "themes/index.html");
+        assert!(tdir.contains("<th>Theme</th>") && tdir.contains("<a href=\"/themes/shared/\">Shared Theme</a>") && tdir.contains("noindex"));
+        assert!(read(&out, "plugins/index.html").contains("<a href=\"/plugins/shared/\">Shared Plugin</a>"));
+        let home = read(&out, "index.html");
+        assert!(home.contains("1 plugins and 1 themes scanned for PHP 8.4"));
+        assert!(home.contains("<a href=\"/themes/\">Themes</a>") && home.contains("See all theme results"));
+        let libs = read(&out, "libraries/index.html");
+        assert!(libs.contains("<a href=\"/themes/shared/\">Shared Theme</a>") && libs.contains("<a href=\"/plugins/shared/\">Shared Plugin</a>"));
+        assert!(libs.contains("Bundled by 1 plugin and 1 theme"));
+        // Existing static files are still written.
+        for f in ["google87fb7301723ae984.html", "robots.txt", "vercel.json", "get/index.html", "privacy/index.html", "guides/index.html", "about/how-we-scan/index.html"] {
+            assert!(out.join(f).is_file(), "{f}");
+        }
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn sitemap_follows_the_gate() {
+        for (mode, want_dirs, want_ok, want_bad) in [
+            (IndexMode::Compatible, false, true, false),
+            (IndexMode::All, true, true, true),
+            (IndexMode::None, false, false, false),
+        ] {
+            let out = tmp_out("sitemap");
+            fixture(&out, Kind::Theme, "good-theme", "Good", "1.0", "compatible", 100);
+            fixture(&out, Kind::Theme, "bad-theme", "Bad", "1.0", "breaks", 100);
+            fixture(&out, Kind::Plugin, "good-plugin", "GoodP", "1.0", "compatible", 100);
+            generate_with(Path::new("/nonexistent"), &out, "https://x.test", mode).unwrap();
+            let sm = read(&out, "sitemap.xml");
+            assert_eq!(sm.contains("<loc>https://x.test/themes/</loc>"), want_dirs, "{mode:?}");
+            assert_eq!(sm.contains("<loc>https://x.test/plugins/</loc>"), want_dirs, "{mode:?}");
+            assert_eq!(sm.contains("https://x.test/themes/good-theme/"), want_ok, "{mode:?}");
+            assert_eq!(sm.contains("https://x.test/plugins/good-plugin/"), want_ok, "{mode:?}");
+            assert_eq!(sm.contains("https://x.test/themes/bad-theme/"), want_bad, "{mode:?}");
+            assert_eq!(read(&out, "themes/index.html").contains("noindex"), !want_dirs);
+            assert_eq!(read(&out, "themes/good-theme/index.html").contains("noindex"), !want_ok);
+            assert_eq!(read(&out, "themes/bad-theme/index.html").contains("noindex"), !want_bad);
+            let _ = std::fs::remove_dir_all(&out);
+        }
+    }
+
+    #[test]
+    fn theme_text_is_escaped() {
+        let evil = "Evil</script><script>alert(1)</script>\"' & <b>";
+        let mut p = synthetic(Kind::Theme, "evil", "compatible", 50_000, true);
+        p.display = evil.into();
+        p.version = "1.0\"><img src=x onerror=alert(1)>".into();
+        let (html, _) = pkg_page(&p, &[], "https://x.test", IndexMode::All);
+        assert!(!html.contains("<script>alert"));
+        assert!(!html.contains("<img src=x"));
+        assert!(!html.contains("<b>\"") && !html.contains(" & <b>"));
+        assert_eq!(html.matches("</script>").count(), 1, "only the JSON-LD block closes a script");
+        let ld = html.split("<script type=\"application/ld+json\">").nth(1).and_then(|r| r.split("</script>").next()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(ld).expect("JSON-LD stays valid JSON");
+        assert_eq!(v["@graph"][0]["about"]["name"], evil);
+        assert!(html.contains("Is the Evil&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;&quot;&#39; &amp; &lt;b&gt; theme compatible"));
+        let dir = directory_pages(&[&p], Kind::Theme, "https://x.test", IndexMode::All);
+        assert!(!dir[0].2.contains("<script>alert"));
+    }
+
+    #[test]
+    fn invalid_slugs_are_skipped() {
+        assert!(valid_slug("contact-form-7") && valid_slug("a_b.c"));
+        for bad in ["", "..", "../x", "a/b", ".hidden", "a\\b", "a b", "<x>"] {
+            assert!(!valid_slug(bad), "{bad}");
+        }
+        let out = tmp_out("slug");
+        fixture(&out, Kind::Theme, "ok", "Ok", "1.0", "compatible", 1);
+        let d = out.join("v1/wordpress-theme/weird");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("index.json"), r#"{"name":"../../escape","versions":["1.0"]}"#).unwrap();
+        let pkgs = load(&out).unwrap();
+        assert_eq!(pkgs.len(), 1);
+        assert_eq!((pkgs[0].kind, pkgs[0].slug.as_str()), (Kind::Theme, "ok"));
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn directories_are_paginated() {
+        let pkgs: Vec<Pkg> = (0..1203).map(|i| synthetic(Kind::Plugin, &format!("p{i:04}"), "compatible", 10_000 - i as i64, false)).collect();
+        let refs: Vec<&Pkg> = pkgs.iter().collect();
+        let pages = directory_pages(&refs, Kind::Plugin, "https://x.test", IndexMode::Compatible);
+        let files: Vec<&str> = pages.iter().map(|(f, _, _)| f.as_str()).collect();
+        assert_eq!(files, ["plugins/index.html", "plugins/page/2/index.html", "plugins/page/3/index.html"]);
+        let rows = |h: &str| h.matches("<tr><td>").count();
+        assert_eq!((rows(&pages[0].2), rows(&pages[1].2), rows(&pages[2].2)), (500, 500, 203));
+        // Page 1 holds the most-installed packages, in order; later pages continue the order.
+        assert!(pages[0].2.contains("/plugins/p0000/") && pages[0].2.contains("/plugins/p0499/") && !pages[0].2.contains("/plugins/p0500/"));
+        assert!(pages[1].2.contains("/plugins/p0500/") && pages[2].2.contains("/plugins/p1202/"));
+        assert!(pages[0].2.contains("Showing 1–500 of 1203") && pages[2].2.contains("Showing 1001–1203 of 1203"));
+        assert!(pages[0].2.contains("<a href=\"/plugins/page/2/\" rel=\"next\">") && !pages[0].2.contains("rel=\"prev\""));
+        assert!(pages[2].2.contains("<a href=\"/plugins/page/2/\" rel=\"prev\">") && !pages[2].2.contains("rel=\"next\""));
+        assert!(pages[1].2.contains("<link rel=\"canonical\" href=\"https://x.test/plugins/page/2/\">"));
+        assert!(pages.iter().all(|(_, _, h)| h.contains("noindex")));
+        assert!(directory_pages(&refs, Kind::Plugin, "https://x.test", IndexMode::All).iter().all(|(_, _, h)| !h.contains("noindex")));
+        // Small and empty directories: one page, no pager.
+        let one = directory_pages(&refs[..500], Kind::Plugin, "https://x.test", IndexMode::All);
+        assert_eq!(one.len(), 1);
+        assert!(!one[0].2.contains("aria-label=\"Pages\""));
+        let none = directory_pages(&[], Kind::Theme, "https://x.test", IndexMode::All);
+        assert_eq!(none.len(), 1);
+        assert_eq!(none[0].0, "themes/index.html");
+        assert!(none[0].2.contains("No themes scanned yet."));
+    }
+
+    #[test]
+    fn generated_pagination_files_and_sitemap() {
+        let out = tmp_out("pages");
+        for i in 0..501 {
+            fixture(&out, Kind::Theme, &format!("t{i:03}"), &format!("T{i}"), "1.0", "compatible", 1000 - i);
+        }
+        generate_with(Path::new("/nonexistent"), &out, "https://x.test", IndexMode::All).unwrap();
+        assert!(out.join("themes/page/2/index.html").is_file());
+        assert!(!out.join("themes/page/3/index.html").exists());
+        assert!(read(&out, "themes/page/2/index.html").contains("/themes/t500/"));
+        assert!(read(&out, "sitemap.xml").contains("<loc>https://x.test/themes/page/2/</loc>"));
+        let _ = std::fs::remove_dir_all(&out);
     }
 }
