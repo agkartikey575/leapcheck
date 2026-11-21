@@ -15,6 +15,23 @@ struct SignatureRule {
     name: String,
     match_file_regex: String,
     version_regex: String,
+    /// Optional: the first 64 KB of the matched file must also match this regex (for libraries
+    /// whose file names are generic, e.g. `ftp.php`).
+    #[serde(default)]
+    content_regex: Option<String>,
+    /// Optional: the component path is this many folders above the matched file's folder (for
+    /// libraries whose version file sits below the library root).
+    #[serde(default)]
+    root_up: usize,
+}
+
+/// One compiled signature rule.
+struct Signature {
+    name: String,
+    file: Regex,
+    version: Regex,
+    content: Option<Regex>,
+    root_up: usize,
 }
 
 #[derive(Deserialize)]
@@ -30,13 +47,30 @@ struct ConfirmedBreak {
     path_regex: String,
 }
 
+/// An error checked by hand in one exact package version and found never to run
+/// (rules/not-reached.json). A new version of the package is checked again automatically.
+#[derive(Deserialize, Clone, Debug)]
+pub struct NotReached {
+    pub slug: String,
+    pub version: String,
+    /// File path relative to the package root.
+    pub file: String,
+    /// Exact rule ID.
+    pub rule_id: String,
+    pub reason: String,
+    #[allow(dead_code)]
+    pub reviewed_by_date: String,
+}
+
 pub struct Rules {
-    signatures: Vec<(String, Regex, Regex)>,
+    signatures: Vec<Signature>,
     extensions: Vec<(String, Vec<Regex>)>,
     retire: Option<serde_json::Value>,
     /// Errors in bundled library code that were checked by hand and are reached by the
     /// package (package, rule pattern, path): they keep the "breaks" verdict.
     confirmed: Vec<(String, String, Regex)>,
+    /// Errors checked by hand and never reached, per exact package version.
+    not_reached: Vec<NotReached>,
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>> {
@@ -54,8 +88,9 @@ impl Rules {
         let retire: Option<serde_json::Value> = read_json(&dir.join("retire-jsrepository.json"))?;
         let mut signatures = vec![];
         for s in sigs {
-            match (Regex::new(&s.match_file_regex), Regex::new(&s.version_regex)) {
-                (Ok(f), Ok(v)) => signatures.push((s.name, f, v)),
+            let content = s.content_regex.as_deref().map(Regex::new).transpose();
+            match (Regex::new(&s.match_file_regex), Regex::new(&s.version_regex), content) {
+                (Ok(file), Ok(version), Ok(content)) => signatures.push(Signature { name: s.name, file, version, content, root_up: s.root_up }),
                 _ => eprintln!("{{\"level\":\"warn\",\"msg\":\"invalid signature rule\",\"rule\":\"{}\"}}", s.name),
             }
         }
@@ -71,17 +106,31 @@ impl Rules {
                 Err(_) => eprintln!("{{\"level\":\"warn\",\"msg\":\"invalid confirmed-break rule\",\"package\":\"{}\"}}", c.package),
             }
         }
-        Ok(Rules { signatures, extensions, retire, confirmed })
+        let not_reached: Vec<NotReached> = read_json(&dir.join("not-reached.json"))?.unwrap_or_default();
+        Ok(Rules { signatures, extensions, retire, confirmed, not_reached })
     }
 
     pub fn summary(&self) -> String {
         format!(
-            "signatures={} extensions={} retirejs={} confirmed_breaks={}",
+            "signatures={} extensions={} retirejs={} confirmed_breaks={} not_reached={}",
             self.signatures.len(),
             self.extensions.len(),
             self.retire.is_some(),
-            self.confirmed.len()
+            self.confirmed.len(),
+            self.not_reached.len()
         )
+    }
+
+    /// Errors listed in rules/not-reached.json for this exact package version (slug, version,
+    /// file and rule ID) become info, with the reviewer's reason in the message.
+    pub fn apply_not_reached(&self, package: &str, version: &str, findings: &mut [crate::model::Finding]) {
+        for f in findings.iter_mut().filter(|f| f.severity == "error") {
+            if let Some(n) = self.not_reached.iter().find(|n| n.slug == package && n.version == version && n.file == f.file && n.rule_id == f.rule_id) {
+                f.severity = "info".into();
+                f.confidence = "low".into();
+                f.message = format!("Checked by hand, this code is not reached ({}): {}", n.reason, f.message);
+            }
+        }
     }
 
     /// A bundled-library error in `package` that was checked by hand and is reachable.
@@ -154,11 +203,23 @@ pub fn components(root: &Path, rules: &Rules) -> Vec<Component> {
 
         // 3. Known PHP libraries by signature.
         if fname.ends_with(".php") || fname.ends_with(".inc") {
-            for (name, file_re, ver_re) in &rules.signatures {
-                if file_re.is_match(&r) {
-                    let version = head(p).and_then(|h| ver_re.captures(&h).and_then(|c| c.get(1)).map(|m| m.as_str().to_string()));
-                    let dir = r.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
-                    add(Component { name: name.clone(), version, kind: "php".into(), path: dir, detection: "signature".into(), known_vulnerabilities: 0 });
+            for sig in &rules.signatures {
+                if sig.file.is_match(&r) {
+                    let text = head(p);
+                    if let Some(c) = &sig.content {
+                        if !text.as_deref().map_or(false, |t| c.is_match(t)) {
+                            continue;
+                        }
+                    }
+                    let version = text.and_then(|h| sig.version.captures(&h).and_then(|c| c.get(1)).map(|m| m.as_str().to_string()));
+                    let mut dir = r.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+                    for _ in 0..sig.root_up {
+                        dir = dir.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+                    }
+                    if sig.root_up > 0 && dir.is_empty() {
+                        continue; // a library root above its folder cannot be the whole package
+                    }
+                    add(Component { name: sig.name.clone(), version, kind: "php".into(), path: dir, detection: "signature".into(), known_vulnerabilities: 0 });
                 }
             }
         }
@@ -482,6 +543,166 @@ const MIN_TARGET_ID: u64 = 80300;
 /// PHP 8.0+ requires libxml2 2.9.0 or newer, so `LIBXML_VERSION < 20900` is never true there.
 const MIN_LIBXML_ID: u64 = 20900;
 
+/// Start of a PHP version check (regex, lower-case source): `PHP_VERSION_ID <`,
+/// `version_compare(PHP_VERSION`, `strnatcmp(phpversion()`. Parsed by `version_check`.
+const VERSION_GUARD: &str = r"(php_version_id|php_major_version)\s*([<>]=?|===?)|(version_compare|strnatcmp)\s*\(\s*(php_version|phpversion\s*\(\s*\))";
+
+/// Core PHP functions (always compiled in, never in an optional extension) and the PHP version
+/// that added them, as a version id. `function_exists()` of one of them is false only on older PHP.
+const CORE_FUNCTIONS_SINCE: &[(&str, u64)] = &[
+    ("str_contains", 80000),
+    ("str_starts_with", 80000),
+    ("str_ends_with", 80000),
+    ("get_debug_type", 80000),
+    ("array_is_list", 80100),
+    ("json_validate", 80300),
+    ("stream_context_set_options", 80300),
+    ("array_find", 80400),
+    ("array_find_key", 80400),
+    ("array_any", 80400),
+    ("array_all", 80400),
+    ("array_first", 80500),
+    ("array_last", 80500),
+];
+
+fn core_function_since(name: &str) -> Option<u64> {
+    CORE_FUNCTIONS_SINCE.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
+}
+
+/// Lowest PHP version id named in a "deprecated since PHP X.Y" / "removed since PHP X.Y" message.
+fn changed_since_id(message: &str) -> Option<u64> {
+    let re = Regex::new(r"(?i)\b(?:deprecated|removed)\s+since\s+(?:php\s*)?(\d+)\.(\d+)").unwrap();
+    re.captures_iter(message).filter_map(|c| Some(c[1].parse::<u64>().ok()? * 10000 + c[2].parse::<u64>().ok()? * 100)).min()
+}
+
+/// For a ternary whose condition starts at byte `start` of `text` (`cond ? a : b`), the byte
+/// ranges of its then part and else part. None when the text is not the condition of a ternary:
+/// the statement ends or a block opens first, the condition is combined with another one
+/// (`&&`, `||`, `and`, `or`, `xor`), is one argument of a call, or uses the short form `?:`.
+pub fn ternary_parts(text: &str, start: usize) -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)> {
+    let b = text.as_bytes();
+    let (mut depth, mut floor) = (0i64, 0i64);
+    let (mut phase, mut nested) = (0u8, 0u32);
+    let (mut q, mut c) = (0usize, 0usize);
+    let mut quote: Option<u8> = None;
+    let mut i = start;
+    let word = |i: usize, w: &[u8]| {
+        b[i..].starts_with(w)
+            && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_' || b[i - 1] == b'$'))
+            && b.get(i + w.len()).map_or(true, |x| !(x.is_ascii_alphanumeric() || *x == b'_'))
+    };
+    while i < b.len() {
+        let ch = b[i];
+        if let Some(qc) = quote {
+            if ch == b'\\' {
+                i += 2;
+                continue;
+            }
+            if ch == qc {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        let next = b.get(i + 1).copied().unwrap_or(b' ');
+        match ch {
+            b'\'' | b'"' => quote = Some(ch),
+            b'(' | b'[' | b'{' if phase > 0 || ch != b'{' => depth += 1,
+            b'{' => return None,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth < floor {
+                    match phase {
+                        0 if ch == b')' => floor = depth,
+                        2 => return Some((q + 1..c, c + 1..i)),
+                        _ => return None,
+                    }
+                }
+            }
+            b';' if depth > floor => {}
+            b';' if phase < 2 => return None,
+            b';' | b',' if phase == 2 && depth == floor => return Some((q + 1..c, c + 1..i)),
+            b',' if phase == 0 && depth == floor => return None,
+            b'&' | b'|' if phase == 0 && next == ch => return None,
+            b'a' | b'o' | b'x' if phase == 0 && (word(i, b"and") || word(i, b"or") || word(i, b"xor")) => return None,
+            b'?' if next == b'?' || next == b'-' => i += 1,
+            b'?' if depth == floor => match phase {
+                0 if next == b':' => return None,
+                0 => {
+                    q = i;
+                    phase = 1;
+                }
+                1 => nested += 1,
+                _ => return Some((q + 1..c, c + 1..i)),
+            },
+            b'?' if phase == 0 => return None,
+            b':' if next == b':' => i += 1,
+            b':' if phase == 1 && depth == floor => {
+                if nested > 0 {
+                    nested -= 1;
+                } else {
+                    c = i;
+                    phase = 2;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    (phase == 2).then(|| (q + 1..c, c + 1..b.len()))
+}
+
+/// Which side of a ternary the finding on line `target` sits on, when the version (or feature)
+/// check starting at byte `start` of line `i` is that ternary's condition: Some(true) = only in
+/// the then part, Some(false) = only in the else part, None = not a ternary or unclear. The
+/// finding is located by the words on its line that start the rule's last name segment
+/// (`e_strict` for `e_strictDeprecated`); a line that lies wholly in one part needs no word.
+fn ternary_side(lines: &[String], i: usize, start: usize, target: usize, rule_id: &str) -> Option<bool> {
+    let mut text = lines[i][start.min(lines[i].len())..].to_string();
+    let mut line_off = 0;
+    for l in &lines[i + 1..=target] {
+        text.push('\n');
+        line_off = text.len();
+        text.push_str(l);
+    }
+    let (then_r, else_r) = ternary_parts(&text, 0)?;
+    let line_end = text.len();
+    if i == target && lines[i][..start.min(lines[i].len())].chars().any(|c| c.is_ascii_alphabetic()) {
+        // Code before the check on the same line could hold the finding.
+        let tail = rule_id.rsplit('.').next().unwrap_or("").to_lowercase();
+        let words = Regex::new(r"[a-z_][a-z0-9_]*").unwrap();
+        if words.find_iter(&lines[i][..start]).any(|w| w.as_str().len() >= 3 && tail.starts_with(w.as_str())) {
+            return None;
+        }
+    }
+    if i != target {
+        let first = text[line_off..].find(|c: char| !c.is_whitespace()).map_or(line_end, |k| line_off + k);
+        if else_r.start <= first && line_end <= else_r.end {
+            return Some(false);
+        }
+        if then_r.start <= first && line_end <= then_r.end {
+            return Some(true);
+        }
+    }
+    let tail = rule_id.rsplit('.').next().unwrap_or("").to_lowercase();
+    let words = Regex::new(r"[a-z_][a-z0-9_]*").unwrap();
+    let hits: Vec<usize> = words
+        .find_iter(&text[line_off..])
+        .filter(|w| w.as_str().len() >= 3 && tail.starts_with(w.as_str()))
+        .map(|w| line_off + w.start())
+        .collect();
+    if hits.is_empty() {
+        return None;
+    }
+    if hits.iter().all(|h| else_r.contains(h)) {
+        Some(false)
+    } else if hits.iter().all(|h| then_r.contains(h)) {
+        Some(true)
+    } else {
+        None
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum VerDir {
     /// The `if` branch runs only on old PHP.
@@ -597,8 +818,9 @@ fn walk(lines: &[String], i: usize, pos: usize, target: usize) -> Walk {
 
 /// Like `apply_guards`, for the given severities (the scan pipeline uses errors and warnings).
 pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], severities: &[&str]) {
-    let version_guard = Regex::new(r"(?i)((php_version_id|php_major_version|libxml_version)\s*([<>]=?|===?)|version_compare\s*\(\s*(php_version|phpversion\s*\(\s*\)))").unwrap();
+    let version_guard = Regex::new(&format!("(?i)({VERSION_GUARD}|libxml_version\\s*([<>]=?|===?))")).unwrap();
     let dyn_exists = Regex::new(r"(!\s*)?\\?function_exists\s*\(\s*\$(?:this->)?([a-z0-9_]+)\s*\)").unwrap();
+    let core_exists = Regex::new(r#"(!\s*)?\\?function_exists\s*\(\s*['"]\\{0,2}([a-z0-9_]+)['"]\s*\)"#).unwrap();
     let mut cache: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for f in findings.iter_mut().filter(|f| severities.contains(&f.severity.as_str())) {
         let lines = cache.entry(f.file.clone()).or_insert_with(|| {
@@ -617,13 +839,23 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
         let ident_re = ident.as_ref().map(|id| {
             let id = regex::escape(id);
             Regex::new(&format!(
-                r#"(!\s*)?\\?(function_exists|extension_loaded|defined|is_callable|class_exists|interface_exists|enum_exists)\s*\(\s*(?:['"]\\?(?:[a-z0-9_]+\\{{1,2}})*{id}|\\?(?:[a-z0-9_]+\\)*{id}::class\b)"#
+                r#"(!\s*)?\\?(function_exists|extension_loaded|defined|is_callable|class_exists|interface_exists|enum_exists)\s*\(\s*(?:['"]\\{{0,2}}(?:[a-z0-9_]+\\{{1,2}})*{id}|\\?(?:[a-z0-9_]+\\)*{id}::class\b)"#
             ))
             .unwrap()
         });
         // Newer PHP features (NewClasses, NewFunctions...) are missing on the target; code that only
         // runs on a PHP version above every checked target never runs there.
         let new_feature = f.rule_id.contains(".New");
+        // A removed or deprecated feature is only reported on targets at or above the version that
+        // changed it, so a check whose old side lies below that version also skips it (E_STRICT,
+        // deprecated in 8.4, behind `PHP_VERSION_ID >= 80400 ? ... : E_STRICT`).
+        let floor = if new_feature { MIN_TARGET_ID } else { changed_since_id(&f.message).map_or(MIN_TARGET_ID, |v| v.max(MIN_TARGET_ID)) };
+        // `function_exists('x')` of another function that merely starts with the rule's name
+        // (`stream_context_set_options` for `stream_context_set_option`) is not a guard for it.
+        let other_core = |line: &str, end: usize, id: &str| {
+            let rest: String = line[end..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+            !rest.is_empty() && core_function_since(&format!("{id}{rest}")).is_some()
+        };
         let mut guarded = false;
 
         // Short-circuit on the finding line: `!function_exists('x') || ... x(...)`.
@@ -642,6 +874,9 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
             if let Some(re) = &ident_re {
                 for c in re.captures_iter(line) {
                     let end = c.get(0).unwrap().end();
+                    if other_core(line, end, ident.as_deref().unwrap_or("")) {
+                        continue;
+                    }
                     if c.get(1).is_none() {
                         pos_end = Some(end);
                     } else {
@@ -651,19 +886,34 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
             }
             let mut ver: Option<(usize, VerDir)> = None;
             let mut new_only: Option<usize> = None;
+            // Byte where the version check starts (for ternaries).
+            let mut ver_start = 0;
             if pos_end.is_none() {
                 if let Some(m) = version_guard.find(line) {
+                    ver_start = m.start();
                     let negated = line[..m.start()].trim_end_matches(|c: char| c.is_whitespace() || c == '(').ends_with('!');
                     if new_feature && !negated && new_php_floor(&line[m.start()..]).map_or(false, |n| n > MIN_TARGET_ID) {
                         new_only = Some(m.end());
                     }
-                    if let Some(d) = version_dir(&line[m.start()..]) {
+                    if let Some(d) = version_dir(&line[m.start()..], floor) {
                         let d = if negated {
                             if d == VerDir::Old { VerDir::New } else { VerDir::Old }
                         } else {
                             d
                         };
                         ver = Some((m.end(), d));
+                    }
+                }
+                // `function_exists('f')` for a core function added in PHP X is false only below X,
+                // so it works like `PHP_VERSION_ID >= X` for code that must not run on new PHP
+                // (e.g. `function_exists('stream_context_set_options') ? ... : stream_context_set_option(...)`).
+                if ver.is_none() && !new_feature {
+                    for c in core_exists.captures_iter(line) {
+                        let Some(since) = core_function_since(&c[2]) else { continue };
+                        if since <= floor {
+                            ver = Some((c.get(0).unwrap().end(), if c.get(1).is_some() { VerDir::Old } else { VerDir::New }));
+                            ver_start = c.get(0).unwrap().start();
+                        }
                     }
                 }
             }
@@ -674,13 +924,21 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
             }) {
                 // Code inside the check runs only when the old feature exists.
                 let is_version = pos_end.is_none();
+                // `old-PHP check ? a : <finding>`: the finding is on the new-PHP side.
+                let other_side = is_version && ternary_side(lines, i, ver_start, target, &f.rule_id) == Some(false);
                 if i == target {
+                    if other_side {
+                        break;
+                    }
                     if !is_version || distance <= 15 {
                         guarded = true; // same line: ternary or one-line if
                         break;
                     }
                 }
                 let w = walk(lines, i, pos, target);
+                if other_side && w.region == Region::Unopened {
+                    break;
+                }
                 let braceless_next = w.region != Region::InBlock && target == i + 1 && !lines[i].trim_end().ends_with(';');
                 let near = !is_version || distance <= 15;
                 match w.region {
@@ -709,11 +967,18 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
                 _ => None,
             };
             if let Some((pos, else_ok)) = alt {
+                // `new-PHP check ? a : <finding>` (same line or a multi-line expression).
+                let ternary_else = |w: Option<&Walk>| {
+                    else_ok && w.map_or(true, |w| w.region == Region::Unopened) && distance <= 15 && ternary_side(lines, i, ver_start, target, &f.rule_id) == Some(false)
+                };
                 if i == target {
+                    if ternary_else(None) {
+                        guarded = true;
+                    }
                     continue;
                 }
                 let w = walk(lines, i, pos, target);
-                if (else_ok && w.region == Region::InElse) || (w.early_exit && w.region == (Region::After { scope_ok: true })) {
+                if (else_ok && w.region == Region::InElse) || (w.early_exit && w.region == (Region::After { scope_ok: true })) || ternary_else(Some(&w)) {
                     guarded = true;
                 }
                 continue;
@@ -773,8 +1038,10 @@ fn always_exists_default(lines: &[String], name: &str) -> bool {
 
 /// Direction of a PHP version check that starts at `expr` (lower-case source), or None when it
 /// is unknown or its old-PHP side could include a checked target version.
-fn version_dir(expr: &str) -> Option<VerDir> {
+/// `floor` raises the PHP threshold for findings that only exist from a later version on.
+fn version_dir(expr: &str, floor: u64) -> Option<VerDir> {
     let (op, id, min) = version_check(expr)?;
+    let min = if min == MIN_TARGET_ID { min.max(floor) } else { min };
     // The old side must lie entirely below the lowest checked target.
     match op.as_str() {
         "<" if id <= min => Some(VerDir::Old),
@@ -807,7 +1074,7 @@ fn version_check(expr: &str) -> Option<(String, u64, u64)> {
     let (op, id, min): (String, u64, u64);
     let konst = Regex::new(r"^(php_version_id|php_major_version|libxml_version)\s*(<=|<|>=|>|===|==)\s*(\d+)").unwrap();
     let vc3 = Regex::new(r#"^version_compare\s*\(\s*(?:php_version|phpversion\s*\(\s*\))\s*,\s*['"]([0-9.]+)['"]\s*,\s*['"]\s*(<=|<|lt|le|>=|>|ge|gt)\s*['"]"#).unwrap();
-    let vc2 = Regex::new(r#"^version_compare\s*\(\s*(?:php_version|phpversion\s*\(\s*\))\s*,\s*['"]([0-9.]+)['"]\s*\)\s*(<=|<|>=|>|===|==)\s*(-1|0|1)\b"#).unwrap();
+    let vc2 = Regex::new(r#"^(?:version_compare|strnatcmp)\s*\(\s*(?:php_version|phpversion\s*\(\s*\))\s*,\s*['"]([0-9.]+)['"]\s*\)\s*(<=|<|>=|>|===|==)\s*(-1|0|1)\b"#).unwrap();
     let php_id = |v: &str| {
         let n: Vec<u64> = v.split('.').map(|x| x.parse().unwrap_or(0)).collect();
         n.first().unwrap_or(&0) * 10000 + n.get(1).unwrap_or(&0) * 100 + n.get(2).unwrap_or(&0)
@@ -850,7 +1117,8 @@ fn version_check(expr: &str) -> Option<(String, u64, u64)> {
         .into();
         min = MIN_TARGET_ID;
     } else if let Some(c) = vc2.captures(&e) {
-        // version_compare(PHP_VERSION, 'X') returns -1, 0 or 1.
+        // version_compare(PHP_VERSION, 'X') returns -1, 0 or 1; so does strnatcmp() on PHP 8.2+,
+        // and its natural order matches version order for dotted numbers.
         id = php_id(&c[1]);
         op = match (&c[2], &c[3]) {
             ("<", "0") | ("==" | "===", "-1") | ("<", "1") | ("<=", "-1") => "<",
@@ -1002,30 +1270,49 @@ struct Suppression {
     action: Option<String>,
     #[serde(default)]
     reason: Option<String>,
+    /// Optional: the finding's message must also match this regex.
+    #[serde(default)]
+    message_regex: Option<String>,
 }
 
+/// Exact rule ID, or a pattern where `*` stands for any text (e.g. `A.B.*` or `A.B.*Removed`).
 fn rule_matches(pattern: &str, rule_id: &str) -> bool {
-    match pattern.strip_suffix('*') {
-        Some(prefix) => rule_id.starts_with(prefix),
-        None => rule_id == pattern,
+    if !pattern.contains('*') {
+        return rule_id == pattern;
     }
+    let parts: Vec<&str> = pattern.split('*').collect();
+    let (first, last) = (parts[0], parts[parts.len() - 1]);
+    if !rule_id.starts_with(first) || rule_id.len() < first.len() + last.len() || !rule_id.ends_with(last) {
+        return false;
+    }
+    let mut rest = &rule_id[first.len()..rule_id.len() - last.len()];
+    for mid in &parts[1..parts.len() - 1] {
+        match rest.find(mid) {
+            Some(k) => rest = &rest[k + mid.len()..],
+            None => return false,
+        }
+    }
+    true
 }
 
 /// Known false positives and non-breaking rules of the underlying rule set, kept as data in
 /// rules/suppressions.json. The first entry that matches a finding (rule and path) decides.
 pub fn apply_suppressions(rules_dir: &Path, findings: &mut Vec<crate::model::Finding>) {
     let Ok(Some(list)) = read_json::<Vec<Suppression>>(&rules_dir.join("suppressions.json")) else { return };
-    let entries: Vec<(String, Regex, String, String)> = list
+    let entries: Vec<(String, Regex, String, String, Option<Regex>)> = list
         .into_iter()
         .filter_map(|s| {
             let re = Regex::new(&s.path_regex).ok()?;
-            Some((s.rule_id, re, s.action.unwrap_or_else(|| "remove".into()), s.reason.unwrap_or_default()))
+            let msg = s.message_regex.as_deref().map(Regex::new).transpose().ok()?;
+            Some((s.rule_id, re, s.action.unwrap_or_else(|| "remove".into()), s.reason.unwrap_or_default(), msg))
         })
         .collect();
-    let find = |f: &crate::model::Finding| entries.iter().find(|(rid, re, _, _)| rule_matches(rid, &f.rule_id) && re.is_match(&f.file));
-    findings.retain(|f| !matches!(find(f), Some((_, _, action, _)) if action == "remove"));
+    let find = |f: &crate::model::Finding| {
+        entries.iter().find(|(rid, re, _, _, msg)| rule_matches(rid, &f.rule_id) && re.is_match(&f.file) && msg.as_ref().map_or(true, |m| m.is_match(&f.message)))
+    };
+    findings.retain(|f| !matches!(find(f), Some((_, _, action, _, _)) if action == "remove"));
     for f in findings.iter_mut() {
-        let Some((_, _, action, why)) = find(f) else { continue };
+        let Some((_, _, action, why, _)) = find(f) else { continue };
         let new_sev = match (action.as_str(), f.severity.as_str()) {
             ("warning", "error") => "warning",
             ("info", "error" | "warning") => "info",
@@ -1046,7 +1333,12 @@ pub fn apply_suppressions(rules_dir: &Path, findings: &mut Vec<crate::model::Fin
 ///  - `ForbiddenThisUseContexts.Global` on `global ${$this->name}` (a dynamic variable name).
 ///  - `InternalInterfaces.datetimeinterfaceFound` on an interface that extends DateTimeInterface.
 ///  - `define()` with a third argument that is literally `false` (PHP 8 only rejects `true`).
+///  - `InternalInterfaces.throwableFound` on `class X extends Y implements Throwable` (valid).
+///  - `RemovedImplodeFlexibleParamOrder` when the second argument is an array literal.
 /// It also lowers to info:
+///  - `NewLateStaticBinding.OutsideClassScope` in a file that declares no class/trait/enum (a
+///    template included from a class method);
+///  - `RemovedOrphanedParent` on a line with no `parent::` (a bare `parent` word);
 ///  - `define()` whose third argument is a variable passed through (e.g. a wrapper function);
 ///  - `RemovedTernaryAssociativity` inside a `match` expression: such a file only compiles on
 ///    PHP 8, where a real unparenthesised nested ternary is a compile error, so the upgrade
@@ -1059,6 +1351,10 @@ pub fn drop_rule_misreads(root: &Path, findings: &mut Vec<crate::model::Finding>
     let this_re = Regex::new(r"(?i)\$this\b").unwrap();
     let iface_re = Regex::new(r"(?i)\binterface\s+[a-z0-9_]+[^{;]*\bextends\b").unwrap();
     let decl_re = Regex::new(r"(?i)\b(class|interface|trait|enum)\s+[a-z0-9_]").unwrap();
+    let throwable_sub = Regex::new(r"(?i)\bclass\s+[a-z0-9_]+\s+extends\s+\\?[a-z0-9_\\]+\s+implements\s+[^{;]*\bthrowable\b").unwrap();
+    let type_decl = Regex::new(r"(?mi)^\s*(abstract\s+|final\s+|readonly\s+)*(class|trait|enum)\s+[a-z_]").unwrap();
+    let implode_call = Regex::new(r"(?i)(^|[^a-z0-9_$>:\\])\\?(implode|join)\s*\(").unwrap();
+    let parent_call = Regex::new(r"(?i)\bparent\s*::").unwrap();
     let mut files: BTreeMap<String, String> = BTreeMap::new();
     let mut ns_functions: Option<BTreeMap<String, std::collections::BTreeSet<String>>> = None;
     let mut text = |file: &str| -> String {
@@ -1125,6 +1421,48 @@ pub fn drop_rule_misreads(root: &Path, findings: &mut Vec<crate::model::Finding>
             }
             return Keep;
         }
+        if f.rule_id.contains("InternalInterfaces.throwableFound") {
+            // `class X extends SomeException implements Throwable` is valid PHP; only a class that
+            // extends nothing fails, and that fails on every PHP 7+ version.
+            let t = text(&f.file);
+            let lines: Vec<&str> = t.lines().collect();
+            if i >= lines.len() {
+                return Keep;
+            }
+            let head = lines[i.saturating_sub(3)..=(i + 2).min(lines.len() - 1)].join(" ");
+            return if throwable_sub.is_match(&head) { Drop } else { Keep };
+        }
+        if f.rule_id.contains("RemovedImplodeFlexibleParamOrder") {
+            // `implode(Foo::SEP, [ ... ])`: the pieces are an array literal in second place, so the
+            // order is right; the rule cannot tell the type of a class constant.
+            let t = text(&f.file);
+            let Some((off, l)) = line_at(&t, i) else { return Keep };
+            let Some(m) = implode_call.find(l) else { return Keep };
+            let args = call_args(&t[off + m.end()..], 2);
+            let is_array = |a: &str| {
+                let a = a.trim_start().to_lowercase();
+                a.starts_with('[') || Regex::new(r"^array\s*\(").unwrap().is_match(&a)
+            };
+            return match args.as_slice() {
+                [a, b] if !is_array(a) && is_array(b) => Drop,
+                _ => Keep,
+            };
+        }
+        if f.rule_id.contains("NewLateStaticBinding.OutsideClassScope") {
+            let t = text(&f.file);
+            if !type_decl.is_match(&t) {
+                return Info("this file declares no class, so it is a template included from a class method, where static:: is valid");
+            }
+            return Keep;
+        }
+        if f.rule_id.contains("Classes.RemovedOrphanedParent") {
+            let t = text(&f.file);
+            let Some((_, l)) = line_at(&t, i) else { return Keep };
+            if !parent_call.is_match(l) {
+                return Info("a bare word parent (for example parent.isObject()), not a parent:: call; this existing bug is not changed by the upgrade");
+            }
+            return Keep;
+        }
         if f.rule_id.contains("RemovedTernaryAssociativity") {
             let t = text(&f.file);
             if let Some((off, _)) = line_at(&t, i) {
@@ -1172,6 +1510,52 @@ fn line_at(t: &str, i: usize) -> Option<(usize, &str)> {
 /// `use function A\B\name;` (or a group import containing `name`) without an `as` alias.
 fn imports_function(text: &str, name: &str) -> bool {
     Regex::new(&format!(r"(?i)\buse\s+function\s+[^;]*[\\{{,]\s*{}\s*[,;}}]", regex::escape(name))).unwrap().is_match(text)
+}
+
+/// The first `max` arguments of a call, from the text just after its opening `(`, trimmed. The
+/// text may span lines. Fewer are returned when the call ends first or the text is cut off.
+fn call_args(text: &str, max: usize) -> Vec<String> {
+    let mut args = vec![String::new()];
+    let (mut depth, mut quote) = (0i32, None::<char>);
+    let mut prev = ' ';
+    for ch in text.chars().take(20_000) {
+        match quote {
+            Some(q) => {
+                if ch == q && prev != '\\' {
+                    quote = None;
+                }
+                args.last_mut().unwrap().push(ch);
+            }
+            None => match ch {
+                '\'' | '"' => {
+                    quote = Some(ch);
+                    args.last_mut().unwrap().push(ch);
+                }
+                '(' | '[' | '{' => {
+                    depth += 1;
+                    args.last_mut().unwrap().push(ch);
+                }
+                ')' | ']' | '}' if depth == 0 => {
+                    args.truncate(max);
+                    return args.into_iter().map(|a| a.trim().to_string()).collect();
+                }
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    args.last_mut().unwrap().push(ch);
+                }
+                ',' if depth == 0 => {
+                    if args.len() == max {
+                        break;
+                    }
+                    args.push(String::new());
+                }
+                _ => args.last_mut().unwrap().push(ch),
+            },
+        }
+        prev = if prev == '\\' && ch == '\\' { ' ' } else { ch };
+    }
+    args.truncate(max);
+    args.into_iter().map(|a| a.trim().to_string()).collect()
 }
 
 /// Third argument of the first `define(` call on the line, trimmed.
@@ -1502,7 +1886,7 @@ pub fn dedupe_findings(findings: &mut Vec<crate::model::Finding>) {
 /// `require(version_compare(PHP_VERSION, '5.3', '<') ? 'x-php52.php' : 'x.php')` or
 /// `if (PHP_VERSION_ID < 50300) require 'x-php52.php';`. Their findings become info.
 pub fn apply_version_selected_files(root: &Path, findings: &mut [crate::model::Finding]) {
-    let version_guard = Regex::new(r"(?i)((php_version_id|php_major_version)\s*([<>]=?|===?)|version_compare\s*\(\s*(php_version|phpversion\s*\(\s*\)))").unwrap();
+    let version_guard = Regex::new(&format!("(?i){VERSION_GUARD}")).unwrap();
     let mut package: Option<Vec<(String, String)>> = None;
     let mut decided: BTreeMap<String, bool> = BTreeMap::new();
     for f in findings.iter_mut().filter(|f| f.severity == "error" || f.severity == "warning") {
@@ -1528,7 +1912,7 @@ pub fn apply_version_selected_files(root: &Path, findings: &mut [crate::model::F
                     refs += 1;
                     let Some(v) = version_guard.find(line[..m.start()].as_ref()) else { return false };
                     let negated = line[..v.start()].trim_end_matches(|c: char| c.is_whitespace() || c == '(').ends_with('!');
-                    let Some(dir) = version_dir(&line[v.start()..]) else { return false };
+                    let Some(dir) = version_dir(&line[v.start()..], MIN_TARGET_ID) else { return false };
                     let old_if = (dir == VerDir::Old) != negated;
                     let between = &line[v.end()..m.start()];
                     // Ternary: `cond ? A : B`. Statement form: `if (cond) require 'A';`.

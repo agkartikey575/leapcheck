@@ -31,14 +31,21 @@
   {
     "rule_id": "PHPCompatibility.FunctionUse.ArgumentFunctionsReportCurrentValue.Changed",
     "path_regex": ".*",
-    "action": "warning",
-    "reason": "behaviour change since PHP 7.0: the code still runs, but func_get_args() and similar may report a changed value"
+    "action": "info",
+    "reason": "PHP 7.0 behaviour: func_get_args() and similar report the current value of a changed parameter, and code that runs on PHP 7 or 8 today already gets this, so the upgrade changes nothing"
   },
   {
     "rule_id": "PHPCompatibility.FunctionUse.ArgumentFunctionsReportCurrentValue.NeedsInspection",
     "path_regex": ".*",
     "action": "info",
     "reason": "PHP 7.0 behaviour: code that runs on PHP 7 or 8 today already gets this behaviour, so the upgrade changes nothing"
+  },
+  {
+    "rule_id": "PHPCompatibility.IniDirectives.RemovedIniDirectives.*Removed",
+    "path_regex": ".*",
+    "message_regex": "removed since PHP ([0-7]\\.|8\\.[0-2]\\b)",
+    "action": "info",
+    "reason": "ini_get()/ini_set() of a directive that no longer exists returns false without an error, and this directive was already gone before PHP 8.3, so the upgrade changes nothing"
   },
   {
     "rule_id": "PHPCompatibility.IniDirectives.RemovedIniDirectives.*",
@@ -117,5 +124,23 @@
     "path_regex": "(?i)(^|/)phpseclib/(.*/)?Crypt/Base\\.php$",
     "action": "info",
     "reason": "phpseclib only uses create_function() when use_inline_crypt is set, which it sets only after function_exists('create_function')"
+  },
+  {
+    "rule_id": "PHPCompatibility.Miscellaneous.RemovedAlternativePHPTags.MaybeASPOpenTagFound",
+    "path_regex": ".*",
+    "action": "info",
+    "reason": "ASP-style tags were removed in PHP 7.0; since then <% is plain text, usually part of a JavaScript template"
+  },
+  {
+    "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.recode_stringRemoved",
+    "path_regex": "(^|/)libraries/classes/Encoding\\.php$",
+    "action": "info",
+    "reason": "phpMyAdmin selects its recode engine only when function_exists('recode_string') is true, so this call is skipped where recode is missing"
+  },
+  {
+    "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.dbase_*",
+    "path_regex": "(^|/)phpmyadmin/shapefile/",
+    "action": "info",
+    "reason": "phpmyadmin/shapefile uses the dbase functions only after extension_loaded('dbase') (the PECL dbase extension) is true"
   }
 ]

@@ -11,9 +11,10 @@ version, so bump it when a rule changes and re-scan the affected packages.
 | `retire-jsrepository.json` | Finds JS libraries (often minified) and known vulnerabilities | upstream RetireJS | Apache-2.0 open data (see below) |
 | `suppressions.json` | Known false positives and rules that do not break on an upgrade (remove, or lower to warning / info) | LeapCheck | our own, checked against real plugins |
 | `confirmed-breaks.json` | Errors in bundled library code that were checked by hand and are reached by the package, so they keep the "breaks" verdict | LeapCheck | our own, each entry checked in the real package |
+| `not-reached.json` | Errors in one exact package version that were checked by hand and never run, so they become info | LeapCheck | our own, each entry checked in the real package |
 | `wp-polyfills.json` | New PHP functions WordPress core defines itself on older PHP (`wp-includes/compat.php`) | LeapCheck | WordPress core source (GPL), function names and versions only |
 
-Current contents (v1, 2026-11-04): **37 PHP signatures, 25 extensions, 76 RetireJS library entries (798 vulnerability records)**.
+Current contents (v1, 2026-11-21): **41 PHP signatures, 25 extensions, 76 RetireJS library entries (798 vulnerability records)**.
 
 ---
 
@@ -35,6 +36,8 @@ Current contents (v1, 2026-11-04): **37 PHP signatures, 25 extensions, 76 Retire
 | `match_file_regex` | yes | Rust `regex` crate syntax, matched against the file path **relative to the plugin/theme root**, with `/` separators (e.g. `vendor/tecnickcom/tcpdf/tcpdf.php`). The engine only tries files ending in `.php` or `.inc`. Anchor the file name with `(^|/)...$`. |
 | `version_regex` | yes (string) | Run on the **first 64 KB** of the matched file. Must have **exactly one** capture group: the version. If it does not match, the component is still reported with `version: null`. |
 | `notes` | no | Ignored by the engine. Explains the rule and its known gaps. |
+| `content_regex` | no | The first 64 KB of the matched file must also match this regex. Use it when the file name is generic (`ftp.php`, `Version.php`). |
+| `root_up` | no | Number of folders above the matched file's folder to use as the component path (default 0), for version files that sit below the library root (`libraries/classes/Version.php` in phpMyAdmin). |
 | `verified_in` | no | Ignored by the engine. Where the rule was checked: `slug@version (path, version found)`. |
 
 Conventions:
@@ -55,7 +58,7 @@ phpmailer, tcpdf, fpdf, mpdf, dompdf*, guzzle (6+), guzzle3, twig, simplepie, ph
 monolog (major only), carbon*, freemius, action-scheduler, cmb2, redux-framework (4.x), reduxcore (3.x),
 titan-framework, tgm-plugin-activation, kirki, carbon-fields, stripe-php, paypal-rest-sdk,
 google-api-client, aws-sdk-php (v3: version usually unknown, see below; v1.x via sdk.class.php), requests, htmlpurifier, phpseclib*,
-parsedown, mobile-detect, getid3, scssphp, scssphp-legacy, lessphp, less.php.
+parsedown, mobile-detect, getid3, scssphp, scssphp-legacy, lessphp, less.php, pemftp*, html_quickform2*, xhprof*, phpmyadmin.
 `*` = presence-only (no version in source).
 
 **Not included because they could not be verified** in the packages downloaded (no WordPress.org copy found
@@ -136,6 +139,9 @@ If the URL returns 404, check the RetireJS repository for where `jsrepository.js
 | `path_regex` | yes | Rust regex on the file path relative to the package root. |
 | `action` | no | `remove` (default): known false positive, dropped. `warning`: errors become warnings (real change, code still runs). `info`: errors and warnings become info (not a change caused by the upgrade; shown, never counted in the verdict). |
 | `reason` | yes in practice | Appended to the finding message in brackets. Written for site visitors. |
+| `message_regex` | no | The finding's message must also match this regex (e.g. `removed since PHP ([0-7]\\.\|8\\.[0-2]\\b)` to treat only directives removed before PHP 8.3). |
+
+`rule_id` patterns: `*` stands for any text, anywhere in the pattern (`A.B.*`, `A.B.*Removed`).
 
 The first entry that matches a finding decides, so put narrow entries before broad ones.
 
@@ -166,6 +172,23 @@ An entry here marks a bundled-library error that was checked by hand and *is* re
 `breaks`. `package` is the slug, `rule_id` an exact rule ID or a prefix ending in `*`, `path_regex` is matched
 against the file path relative to the package root. `reason` and `verified_in` are documentation. Add an
 entry only after reading the code path that calls the library.
+
+## 7. `not-reached.json`
+
+```json
+[{"slug": "wp-db-backup", "version": "2.5.3", "file": "wp-db-backup.php",
+  "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.eachDeprecatedRemoved",
+  "reason": "each() is only in the is_array() branch of backquote(), and all 11 callers pass a string",
+  "reviewed_by_date": "2026-11-19"}]
+```
+
+The mirror of `confirmed-breaks.json`: an error that was checked by hand and is never reached (a
+function nothing calls, a branch no caller can enter). A static scan cannot prove this, so each
+entry is pinned to the **exact** package `slug`, `version`, `file` (relative to the package root)
+and `rule_id` (exact, no patterns). A matching error becomes info with the message prefix
+"Checked by hand, this code is not reached (<reason>): ". A new package version does not match, so
+it is checked again automatically. `reason` is shown to site visitors; `reviewed_by_date` is
+documentation. Add an entry only after reading every caller of the code in that version.
 
 ## Verification method (how every rule was checked)
 

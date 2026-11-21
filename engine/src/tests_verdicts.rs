@@ -249,12 +249,14 @@ fn suppression_removes_carbon_datetimeinterface_case_only() {
 
 #[test]
 fn suppression_warning_action_downgrades_error_and_adds_reason() {
-    let mut fs = vec![finding(ARGS_CHANGED, "error", "inc/util.php", 9), finding(ARGS_CHANGED, "warning", "inc/util.php", 20)];
+    // A deprecated (not removed) ini directive keeps the "warning" action.
+    let ini = "PHPCompatibility.IniDirectives.RemovedIniDirectives.auto_detect_line_endingsDeprecated";
+    let mut fs = vec![finding(ini, "error", "inc/util.php", 9), finding(ini, "warning", "inc/util.php", 20)];
     detect::apply_suppressions(&rules_dir(), &mut fs);
     assert_eq!(fs.len(), 2, "warning action must not remove findings");
     assert_eq!(fs[0].severity, "warning");
     assert!(fs[0].message.starts_with("test message ("), "{}", fs[0].message);
-    assert!(fs[0].message.contains("func_get_args"), "{}", fs[0].message);
+    assert!(fs[0].message.contains("ini_set()/ini_get()"), "{}", fs[0].message);
     assert_eq!(fs[1].message, "test message", "existing warnings are left unchanged");
 }
 
@@ -476,11 +478,11 @@ fn golden_pipeline_fixture_plugin() {
         "inc/db.php:6 mysql_queryDeprecatedRemoved info/low -",
         "legacy/old.php:2 mysql_queryDeprecatedRemoved warning/low -",
         "lib/crypto/crypto.php:3 mcrypt_encryptDeprecatedRemoved info/low -",
-        "vendor/nesbot/carbon/src/Carbon/Carbon.php:10 Changed warning/high nesbot/carbon@2.72.3",
+        "vendor/nesbot/carbon/src/Carbon/Carbon.php:10 Changed info/high nesbot/carbon@2.72.3",
     ];
     assert_eq!(got, expected, "\nactual:\n{}\n", got.join("\n"));
     let v = verdicts(&[("8.4".to_string(), fs)], 0);
-    assert_eq!(v, vec![("php:8.4".to_string(), "breaks".to_string(), 1, 2)]);
+    assert_eq!(v, vec![("php:8.4".to_string(), "breaks".to_string(), 1, 1)]);
 }
 
 // ---------- known limitations (documented, not yet fixed) ----------
@@ -1396,4 +1398,390 @@ fn strip_comments_ignores_comment_markers_inside_strings() {
     let mut fs = vec![pf(BREAK_OUTSIDE, "error", "common.php", 5)];
     full(fx.path(), &mut fs);
     assert!(fs.is_empty());
+}
+
+// ---------- fixtures n11 and n16-n27, c2 (warning noise, misreads, guards, never-reached code) ----------
+
+/// A finding with the analyzer's real message (some passes read the "since PHP X.Y" in it).
+fn pfm(rule: &str, severity: &str, file: &str, line: u32, message: &str) -> Finding {
+    let mut f = pf(rule, severity, file, line);
+    f.message = message.into();
+    f
+}
+
+const IMPLODE_RULE: &str = "ParameterValues.RemovedImplodeFlexibleParamOrder.Removed";
+const IMPLODE_MSG: &str = "Passing the $glue and $pieces parameters in reverse order to implode has been deprecated since PHP 7.4 and is removed since PHP 8.0; $glue should be the first parameter and $pieces the second";
+const CREATE_FUNCTION_MSG: &str = "Function create_function() is deprecated since PHP 7.2 and removed since PHP 8.0; Use an anonymous function instead";
+const EACH_MSG: &str = "Function each() is deprecated since PHP 7.2 and removed since PHP 8.0; Use a foreach loop or ArrayIterator instead";
+const E_STRICT_RULE: &str = "Constants.RemovedConstants.e_strictDeprecated";
+const E_STRICT_MSG: &str = "The constant \"E_STRICT\" is deprecated since PHP 8.4";
+
+#[test]
+fn n11_version_check_ternary_guards_its_old_side() {
+    let src = "<?php\n$levels = version_compare(PHP_VERSION, '8.4.0', '>=') ? E_ALL : E_ALL & ~E_STRICT;\nset_error_handler('my_handler', $levels);\n";
+    let fx = Fixture::new("n11").file("plugin.php", src);
+    let mut fs = vec![pfm(E_STRICT_RULE, "warning", "plugin.php", 2, E_STRICT_MSG)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info", "{}", fs[0].message);
+    assert_eq!(verdict_of(&fs), "compatible");
+    // E_STRICT on the new-PHP side, or a check whose old side still includes PHP 8.4: kept.
+    for (name, src) in [
+        ("n11b", "<?php\n$levels = version_compare(PHP_VERSION, '8.4.0', '<') ? E_ALL : E_ALL & ~E_STRICT;\n"),
+        ("n11c", "<?php\n$levels = PHP_VERSION_ID >= 80500 ? E_ALL : E_ALL & ~E_STRICT;\n"),
+        ("n11d", "<?php\n$levels = PHP_VERSION_ID >= 80400 && $x ? E_ALL : E_ALL & ~E_STRICT;\n"),
+        ("n11e", "<?php\n$levels = E_ALL & ~E_STRICT | (PHP_VERSION_ID >= 80400 ? 1 : 2);\n"),
+    ] {
+        let fx = Fixture::new(name).file("plugin.php", src);
+        let mut fs = vec![pfm(E_STRICT_RULE, "warning", "plugin.php", 2, E_STRICT_MSG)];
+        full(fx.path(), &mut fs);
+        assert_eq!(fs[0].severity, "warning", "{name}");
+    }
+    // Multi-line ternary, and a plain `PHP_VERSION_ID < 80400` block.
+    let fx = Fixture::new("n11f")
+        .file("a.php", "<?php\n$l = PHP_VERSION_ID >= 80400\n    ? E_ALL\n    : E_ALL & ~E_STRICT;\n")
+        .file("b.php", "<?php\nif (PHP_VERSION_ID < 80400) {\n    error_reporting(E_ALL & ~E_STRICT);\n}\n");
+    let mut fs = vec![pfm(E_STRICT_RULE, "warning", "a.php", 4, E_STRICT_MSG), pfm(E_STRICT_RULE, "warning", "b.php", 3, E_STRICT_MSG)];
+    full(fx.path(), &mut fs);
+    assert_eq!(sev(&fs).iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>(), vec!["info", "info"]);
+}
+
+#[test]
+fn old_php_ternary_only_guards_its_then_side() {
+    let then_side = "<?php\n$f = PHP_VERSION_ID < 70000 ? create_function('$a', 'return $a;') : function ($a) { return $a; };\n";
+    let else_side = "<?php\n$f = PHP_VERSION_ID < 70000 ? function ($a) { return $a; } : create_function('$a', 'return $a;');\n";
+    let fx = Fixture::new("ternold").file("t.php", then_side).file("e.php", else_side);
+    let mut fs = vec![pfm("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "t.php", 2, CREATE_FUNCTION_MSG), pfm("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "e.php", 2, CREATE_FUNCTION_MSG)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs.iter().map(|f| (f.file.as_str(), f.severity.as_str())).collect::<Vec<_>>(), vec![("t.php", "info"), ("e.php", "error")]);
+}
+
+#[test]
+fn ternary_parts_finds_then_and_else() {
+    let t = "version_compare(php_version, '8.4', '>=') ? e_all : e_all & ~e_strict; $x = 1;";
+    let (a, b) = detect::ternary_parts(t, 0).unwrap();
+    assert_eq!(&t[a], " e_all ");
+    assert_eq!(&t[b], " e_all & ~e_strict");
+    let t2 = "(php_version_id >= 80000) ? a::b(c ? d : e) : ['x' => '?:'];";
+    let (a, b) = detect::ternary_parts(t2, 1).unwrap();
+    assert_eq!(&t2[a], " a::b(c ? d : e) ");
+    assert_eq!(&t2[b], " ['x' => '?:']");
+    for no in ["php_version_id >= 80000) { a(); }", "php_version_id >= 80000 ?: b;", "php_version_id >= 1, $a ? b : c);", "php_version_id >= 1 and $a ? b : c;"] {
+        assert!(detect::ternary_parts(no, 0).is_none(), "{no}");
+    }
+}
+
+#[test]
+fn n16_throwable_on_an_exception_subclass_is_valid() {
+    let fx = Fixture::new("n16")
+        .file("src/InvalidDataException.php", "<?php\nnamespace Acme\\Exceptions;\nuse InvalidArgumentException;\nuse Throwable;\nfinal class InvalidDataException extends InvalidArgumentException implements Throwable {}\n")
+        .file("src/Multi.php", "<?php\nclass NotFound extends \\RuntimeException\n    implements \\JsonSerializable, Throwable\n{\n}\n")
+        .file("src/Bad.php", "<?php\nclass Bad implements Throwable {}\n");
+    let r = "Interfaces.InternalInterfaces.throwableFound";
+    let mut fs = vec![pf(r, "error", "src/InvalidDataException.php", 5), pf(r, "error", "src/Multi.php", 3), pf(r, "error", "src/Bad.php", 2)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs.iter().map(|f| f.file.as_str()).collect::<Vec<_>>(), vec!["src/Bad.php"], "only a class that extends nothing fails");
+    assert_eq!(fs[0].severity, "error");
+}
+
+#[test]
+fn n17_strnatcmp_phpversion_is_a_version_check() {
+    let src = "<?php\nif ( strnatcmp( phpversion(), '7.0.0' ) >= 0 ) {\n    add_filter( 'wp_default_editor', function() { return 'tmce'; } );\n} else {\n    add_filter( 'wp_default_editor', create_function( '', 'return \"tmce\";' ) );\n}\n";
+    let fx = Fixture::new("n17").file("plugin.php", src);
+    let mut fs = vec![pfm("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "plugin.php", 5, CREATE_FUNCTION_MSG)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    assert_eq!(verdict_of(&fs), "compatible");
+    // The new-PHP side of the same check stays an error.
+    let src2 = "<?php\nif ( strnatcmp( phpversion(), '7.0.0' ) >= 0 ) {\n    add_filter( 'x', create_function( '', 'return 1;' ) );\n}\n";
+    let fx2 = Fixture::new("n17b").file("plugin.php", src2);
+    let mut fs2 = vec![pfm("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "plugin.php", 3, CREATE_FUNCTION_MSG)];
+    full(fx2.path(), &mut fs2);
+    assert_eq!(fs2[0].severity, "error");
+}
+
+#[test]
+fn n18_implode_with_constant_glue_and_array_literal_is_correct_order() {
+    let src = "<?php\nnamespace Acme\\Api;\nclass Verifier {\n    public function canonical($method, $path, $x, $nonce) {\n        return implode(SignedRequest::CANONICAL_SEPARATOR, [\n            SignedRequest::CANONICAL_V2_PREFIX,\n            strtoupper($method),\n            $x === null ? '' : (string) $x,\n            $nonce,\n        ]);\n    }\n    public function b($a) { return join(self::SEP, array( $a, 'b' )); }\n}\n";
+    let fx = Fixture::new("n18").file("plugin.php", src);
+    let mut fs = vec![pfm(IMPLODE_RULE, "error", "plugin.php", 5, IMPLODE_MSG), pfm(IMPLODE_RULE, "error", "plugin.php", 12, IMPLODE_MSG)];
+    full(fx.path(), &mut fs);
+    assert!(fs.is_empty(), "{:?}", sev(&fs));
+}
+
+#[test]
+fn c2_reversed_implode_with_array_first_still_breaks() {
+    let src = "<?php\nfunction acme_list() { return implode( array('a', 'b'), ', ' ); }\nadd_action( 'init', 'acme_list' );\n";
+    let fx = Fixture::new("c2").file("plugin.php", src);
+    let mut fs = vec![pfm(IMPLODE_RULE, "error", "plugin.php", 2, IMPLODE_MSG)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "error");
+    assert_eq!(verdict_of(&fs), "breaks");
+}
+
+#[test]
+fn n19_static_in_a_template_without_class_is_info() {
+    let fx = Fixture::new("n19")
+        .file("backend/Dialog.php", "<?php\nclass Dialog {\n    public static function render() { include __DIR__ . '/templates/dialog.php'; }\n    public static function renderTemplate($t, $v) { echo $t; }\n}\n")
+        .file("backend/templates/dialog.php", "<div class=\"modal-body\">\n    <?php static::renderTemplate( '_modal_body', compact( 'gateway' ) ) ?>\n</div>\n")
+        .file("inc/helpers.php", "<?php\nclass Helper {}\nfunction h() { return static::x(); }\n");
+    let r = "Classes.NewLateStaticBinding.OutsideClassScope";
+    let mut fs = vec![pf(r, "error", "backend/templates/dialog.php", 2), pf(r, "error", "inc/helpers.php", 3)];
+    full(fx.path(), &mut fs);
+    assert_eq!(sev(&fs).iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>(), vec!["info", "error"], "a file that declares a class is not a template");
+    assert!(fs[0].message.contains("template included from a class method"), "{}", fs[0].message);
+}
+
+#[test]
+fn n20_argument_functions_changed_is_info() {
+    let src = "<?php\nfunction get_wishlist( $id ) {\n    if ( is_array( $id ) ) { $id = $id[0]; }\n    error_log( print_r( func_get_args(), true ) );\n    return $id;\n}\n";
+    let fx = Fixture::new("n20").file("plugin.php", src);
+    let mut fs = vec![pf("FunctionUse.ArgumentFunctionsReportCurrentValue.Changed", "warning", "plugin.php", 4)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    assert_eq!(verdict_of(&fs), "compatible");
+}
+
+#[test]
+fn n21_removed_ini_directives_are_info_but_recent_changes_stay() {
+    let src = "<?php\nif ( ini_get( 'safe_mode' ) ) { echo 'safe mode on'; }\n$mb = function_exists( 'mb_strlen' ) && ( (int) ini_get( 'mbstring.func_overload' ) & 2 );\nini_set( 'auto_detect_line_endings', '1' );\nini_get( 'oci8.events' );\n";
+    let fx = Fixture::new("n21").file("plugin.php", src);
+    let ini = "IniDirectives.RemovedIniDirectives.";
+    let mut fs = vec![
+        pfm(&format!("{ini}safe_modeDeprecatedRemoved"), "error", "plugin.php", 2, "INI directive 'safe_mode' is deprecated since PHP 5.3 and removed since PHP 5.4"),
+        pfm(&format!("{ini}mbstring_func_overloadDeprecatedRemoved"), "error", "plugin.php", 3, "INI directive 'mbstring.func_overload' is deprecated since PHP 7.2 and removed since PHP 8.0"),
+    ];
+    full(fx.path(), &mut fs);
+    assert!(fs.iter().all(|f| f.severity == "info"), "{:?}", sev(&fs));
+    assert_eq!(verdict_of(&fs), "compatible");
+    // Deprecated only (still there), or removed in a checked version: kept as warnings.
+    let mut fs2 = vec![
+        pfm(&format!("{ini}auto_detect_line_endingsDeprecated"), "warning", "plugin.php", 4, "INI directive 'auto_detect_line_endings' is deprecated since PHP 8.1"),
+        pfm(&format!("{ini}oci8_eventsRemoved"), "error", "plugin.php", 5, "INI directive 'oci8.events' is removed since PHP 8.4"),
+    ];
+    full(fx.path(), &mut fs2);
+    assert_eq!(sev(&fs2).iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>(), vec!["warning", "warning"]);
+}
+
+#[test]
+fn n22_asp_tag_in_a_js_template_is_info() {
+    let src = "<script type=\"text/template\" id=\"preview\">\n    <div class=\"<%= settings.isLaunch ? 'active' : '' %>\"><%- label %></div>\n</script>\n";
+    let fx = Fixture::new("n22").file("views/preview.php", src);
+    let mut fs = vec![pf("Miscellaneous.RemovedAlternativePHPTags.MaybeASPOpenTagFound", "warning", "views/preview.php", 2)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    assert_eq!(verdict_of(&fs), "compatible");
+}
+
+#[test]
+fn n23_function_exists_of_the_new_core_alternative_guards_the_else_branch() {
+    let src = "<?php\nfunction set_ssl($resource, array $options) {\n    return function_exists('stream_context_set_options')\n        ? stream_context_set_options($resource, ['ssl' => $options])\n        : stream_context_set_option($resource, ['ssl' => $options]);\n}\n";
+    let r = "FunctionUse.OptionalToRequiredFunctionParameters.stream_context_set_option_";
+    let msg = |p: &str| format!("The \"{p}\" parameter for function stream_context_set_option() is missing. Passing this parameter is no longer optional. The optional nature of the parameter is deprecated since PHP 8.4");
+    let mk = |file: &str, line: u32| vec![pfm(&format!("{r}option_nameSoftRequired"), "warning", file, line, &msg("option_name")), pfm(&format!("{r}valueSoftRequired"), "warning", file, line, &msg("value"))];
+    let fx = Fixture::new("n23")
+        .file("plugin.php", src)
+        // Then-branch, and an if/else form.
+        .file("then.php", "<?php\n$r = function_exists('stream_context_set_options') ? stream_context_set_option($c, ['ssl' => $o]) : null;\n")
+        .file("ifelse.php", "<?php\nif (\\function_exists('stream_context_set_options')) {\n    stream_context_set_options($c, $o);\n} else {\n    stream_context_set_option($c, $o);\n}\n");
+    let mut fs = mk("plugin.php", 5);
+    fs.extend(mk("then.php", 2));
+    fs.extend(mk("ifelse.php", 5));
+    full(fx.path(), &mut fs);
+    let got: Vec<(&str, &str)> = fs.iter().map(|f| (f.file.as_str(), f.severity.as_str())).collect();
+    assert_eq!(got, vec![("plugin.php", "info"), ("plugin.php", "info"), ("then.php", "warning"), ("then.php", "warning"), ("ifelse.php", "info"), ("ifelse.php", "info")]);
+    // An extension function is no version check: mbstring can be missing on any PHP.
+    let fx2 = Fixture::new("n23b").file("p.php", "<?php\n$s = function_exists('mb_convert_encoding') ? mb_convert_encoding($s, 'UTF-8', 'ISO-8859-1') : utf8_encode($s);\n");
+    let mut fs2 = vec![pfm("FunctionUse.RemovedFunctions.utf8_encodeDeprecated", "warning", "p.php", 2, "Function utf8_encode() is deprecated since PHP 8.2")];
+    full(fx2.path(), &mut fs2);
+    assert_eq!(fs2[0].severity, "warning");
+}
+
+#[test]
+fn n24_escaped_name_in_function_exists_is_a_guard() {
+    let src = "<?php\nnamespace Acme\\Polyfill;\nfunction array_first(array $array) {\n    if (\\function_exists('\\\\array_first')) {\n        return \\array_first($array);\n    }\n    foreach ($array as $v) { return $v; }\n    return null;\n}\n";
+    let fx = Fixture::new("n24").file("src/Polyfill.php", src);
+    let mut fs = vec![pfm("FunctionUse.NewFunctions.array_firstFound", "error", "src/Polyfill.php", 5, "The function array_first() is not present in PHP version 8.4 or earlier")];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info", "{}", fs[0].message);
+    assert_eq!(verdict_of(&fs), "compatible");
+}
+
+/// A rules folder holding only the given not-reached.json.
+fn not_reached_rules(json: &str) -> (Fixture, detect::Rules) {
+    let fx = Fixture::new("nrrules").file("not-reached.json", json);
+    let r = detect::Rules::load(fx.path()).unwrap();
+    (fx, r)
+}
+
+#[test]
+fn n25_n27_hand_checked_never_reached_errors_are_info_for_that_version_only() {
+    let n25 = "<?php\nfunction acme_clean( $s ) {\n    if ( is_string( $s ) ) { return trim( $s ); }\n    if ( is_array( $s ) ) {\n        reset( $s );\n        while ( list( $k, $v ) = each( $s ) ) { $s[ $k ] = acme_clean( $v ); }\n    }\n    return $s;\n}\n$ua = acme_clean( $_SERVER['HTTP_USER_AGENT'] ?? '' );\n";
+    let n27 = "<?php\nfunction acme_get_features() { return array('a', 'b'); }\nfunction acme_the_features() { echo implode( acme_get_features(), ', ' ); }\n";
+    let fx = Fixture::new("n25").file("plugin.php", n25).file("features.php", n27);
+    let (_r, rules) = not_reached_rules(&format!(
+        r#"[{{"slug":"acme","version":"1.0","file":"plugin.php","rule_id":"{P}FunctionUse.RemovedFunctions.eachDeprecatedRemoved","reason":"only callers pass strings","reviewed_by_date":"2026-11-19"}},
+            {{"slug":"acme","version":"1.0","file":"features.php","rule_id":"{P}{IMPLODE_RULE}","reason":"function never called","reviewed_by_date":"2026-11-19"}}]"#
+    ));
+    assert!(rules.summary().contains("not_reached=2"), "{}", rules.summary());
+    let fresh = || vec![pfm("FunctionUse.RemovedFunctions.eachDeprecatedRemoved", "error", "plugin.php", 6, EACH_MSG), pfm(IMPLODE_RULE, "error", "features.php", 3, IMPLODE_MSG)];
+    let mut fs = fresh();
+    full(fx.path(), &mut fs);
+    assert_eq!(verdict_of(&fs), "breaks", "the scan alone cannot prove this");
+    rules.apply_not_reached("acme", "1.0", &mut fs);
+    assert!(fs.iter().all(|f| f.severity == "info"), "{:?}", sev(&fs));
+    assert!(fs[0].message.starts_with("Checked by hand, this code is not reached (only callers pass strings): Function each()"), "{}", fs[0].message);
+    assert_eq!(verdict_of(&fs), "compatible");
+    // A new version, another package, file or rule is checked again.
+    for (pkg, ver) in [("acme", "1.1"), ("other", "1.0")] {
+        let mut fs = fresh();
+        full(fx.path(), &mut fs);
+        rules.apply_not_reached(pkg, ver, &mut fs);
+        assert_eq!(verdict_of(&fs), "breaks", "{pkg}@{ver}");
+    }
+    let mut fs = vec![pfm("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "plugin.php", 6, CREATE_FUNCTION_MSG)];
+    rules.apply_not_reached("acme", "1.0", &mut fs);
+    assert_eq!(fs[0].severity, "error");
+}
+
+#[test]
+fn shipped_not_reached_entries_load_and_match_exact_versions() {
+    let rules = rules();
+    assert!(rules.summary().contains("not_reached=7"), "{}", rules.summary());
+    let cases = [
+        ("wp-db-backup", "2.5.3", "wp-db-backup.php", "FunctionUse.RemovedFunctions.eachDeprecatedRemoved"),
+        ("contact-form-plugin", "4.4.1", "contact_form.php", "FunctionUse.RemovedFunctions.eachDeprecatedRemoved"),
+        ("wptouch", "4.3.62", "core/admin-extensions.php", IMPLODE_RULE),
+        ("wptouch", "4.3.62", "core/admin-themes.php", IMPLODE_RULE),
+        ("backuply", "1.6.0", "lib/ftp.php", "FunctionUse.RemovedFunctions.eachDeprecatedRemoved"),
+        ("matomo", "5.13.1", "app/libs/HTML/QuickForm2/Renderer/Default.php", "FunctionUse.RemovedFunctions.eachDeprecatedRemoved"),
+        ("matomo", "5.13.1", "app/vendor/lox/xhprof/xhprof_lib/utils/xhprof_runs.php", "FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved"),
+    ];
+    for (slug, ver, file, rule) in cases {
+        let mut fs = vec![pf(rule, "error", file, 1)];
+        rules.apply_not_reached(slug, ver, &mut fs);
+        assert_eq!(fs[0].severity, "info", "{slug} {file}");
+        let mut fs = vec![pf(rule, "error", file, 1)];
+        rules.apply_not_reached(slug, "999.0", &mut fs);
+        assert_eq!(fs[0].severity, "error", "{slug}: a new version is checked again");
+    }
+}
+
+#[test]
+fn n26_bundled_ftp_class_is_a_component() {
+    let fx = Fixture::new("n26")
+        .file("plugin.php", "<?php\nrequire_once __DIR__ . '/lib/ftp.php';\n$f = new ftp_base();\n")
+        .file("lib/ftp.php", "<?php\nclass ftp_base {\n    function glob_regexp($pattern, $probe) { return true; }\n    function glob($pattern, $handle = null) {\n        $output = array();\n        $list = array('a' => 1);\n        while (list($k, $v) = each($list)) { $output[] = $k; }\n        return $output;\n    }\n}\n")
+        // Same file name, not the FTP class: no component.
+        .file("other/ftp.php", "<?php\nfunction my_ftp() {}\n");
+    let comps = detect::dedupe_components(detect::components(fx.path(), &rules()));
+    assert_eq!(comps.iter().map(|c| format!("{} {}", c.name, c.path)).collect::<Vec<_>>(), vec!["pemftp lib"]);
+    let mut fs = vec![pfm("FunctionUse.RemovedFunctions.eachDeprecatedRemoved", "error", "lib/ftp.php", 7, EACH_MSG)];
+    for f in fs.iter_mut() {
+        f.component = detect::attribute(&f.file, &comps);
+    }
+    full(fx.path(), &mut fs);
+    let got = stored(&[("8.4".to_string(), fs)], 0);
+    assert_eq!(got[0].1, "issues");
+    assert!(got[0].3[0].starts_with(crate::BUNDLED_PREFIX), "{}", got[0].3[0]);
+}
+
+#[test]
+fn h1_signatures_for_quickform2_xhprof_and_phpmyadmin() {
+    let fx = Fixture::new("h1sigs")
+        .file("app/libs/HTML/QuickForm2.php", "<?php\n    class HTML_QuickForm2 extends \\HTML_QuickForm2_Container\n    {\n    }\n")
+        .file("app/libs/HTML/QuickForm2/Renderer/Default.php", "<?php\n")
+        .file("app/vendor/lox/xhprof/xhprof_lib/utils/xhprof_runs.php", "<?php\n    class XHProfRuns_Default implements \\iXHProfRuns\n    {\n    }\n")
+        .file("lib/phpMyAdmin/libraries/classes/Version.php", "<?php\n\ndeclare(strict_types=1);\n\nnamespace PhpMyAdmin;\n\nfinal class Version\n{\n    public const VERSION = '5.2.3' . VERSION_SUFFIX;\n}\n")
+        .file("lib/phpMyAdmin/libraries/classes/Encoding.php", "<?php\n")
+        // A plugin's own Version.php in another namespace is not phpMyAdmin.
+        .file("src/libraries/classes/Version.php", "<?php\nnamespace Acme;\nclass Version { const VERSION = '1.0'; }\n");
+    let comps = detect::dedupe_components(detect::components(fx.path(), &rules()));
+    let got: Vec<String> = comps.iter().map(|c| format!("{} {} {}", c.name, c.version.as_deref().unwrap_or("-"), c.path)).collect();
+    assert_eq!(got, vec!["html_quickform2 - app/libs/HTML", "phpmyadmin 5.2.3 lib/phpMyAdmin", "xhprof - app/vendor/lox/xhprof"]);
+    assert_eq!(detect::attribute("app/libs/HTML/QuickForm2/Renderer/Default.php", &comps).as_deref(), Some("html_quickform2"));
+    assert_eq!(detect::attribute("app/vendor/lox/xhprof/xhprof_lib/utils/xhprof_runs.php", &comps).as_deref(), Some("xhprof"));
+    assert_eq!(detect::attribute("lib/phpMyAdmin/libraries/classes/Encoding.php", &comps).as_deref(), Some("phpmyadmin@5.2.3"));
+}
+
+#[test]
+fn g2_phpmyadmin_engine_selected_calls_are_info() {
+    let fx = Fixture::new("g2").file("lib/phpMyAdmin/libraries/classes/Encoding.php", "<?php\n").file("lib/phpMyAdmin/vendor/phpmyadmin/shapefile/src/ShapeFile.php", "<?php\n");
+    let mut fs = vec![
+        pfm("FunctionUse.RemovedFunctions.recode_stringRemoved", "error", "lib/phpMyAdmin/libraries/classes/Encoding.php", 196, "Function recode_string() is removed since PHP 7.4"),
+        pfm("FunctionUse.RemovedFunctions.dbase_openRemoved", "error", "lib/phpMyAdmin/vendor/phpmyadmin/shapefile/src/ShapeFile.php", 628, "Function dbase_open() is removed since PHP 5.3"),
+        pfm("FunctionUse.RemovedFunctions.recode_stringRemoved", "error", "inc/mine.php", 3, "Function recode_string() is removed since PHP 7.4"),
+    ];
+    full(fx.path(), &mut fs);
+    assert_eq!(sev(&fs).iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>(), vec!["info", "info", "error"]);
+}
+
+#[test]
+fn m4_bare_parent_word_is_info_but_parent_call_stays() {
+    let src = "<?php\nclass Lib {\n    function w($c) { return (is_array($c) || parent.isObject($c)) ? json_encode($c) : $c; }\n    function x() { return parent::x(); }\n}\n";
+    let fx = Fixture::new("m4").file("library.php", src);
+    let r = "Classes.RemovedOrphanedParent.Removed";
+    let msg = "Using \"parent\" inside a class without parent is deprecated since PHP 7.4 and removed since PHP 8.0";
+    let mut fs = vec![pfm(r, "error", "library.php", 3, msg), pfm(r, "error", "library.php", 4, msg)];
+    full(fx.path(), &mut fs);
+    assert_eq!(sev(&fs).iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>(), vec!["info", "error"]);
+}
+
+#[test]
+fn suppression_patterns_and_message_regex() {
+    let fx = Fixture::new("supp2").file(
+        "suppressions.json",
+        r#"[{"rule_id":"R.*Removed","path_regex":".*","message_regex":"since PHP [0-7]\\.","action":"info","reason":"old"},{"rule_id":"R.*","path_regex":".*","action":"warning","reason":"rest"}]"#,
+    );
+    let mut fs = vec![
+        pfm("x", "error", "a.php", 1, "removed since PHP 5.4"),
+        pfm("x", "error", "a.php", 2, "removed since PHP 8.4"),
+        pfm("x", "error", "a.php", 3, "deprecated since PHP 5.4"),
+    ];
+    fs[0].rule_id = "R.aDeprecatedRemoved".into();
+    fs[1].rule_id = "R.bRemoved".into();
+    fs[2].rule_id = "R.cDeprecated".into();
+    detect::apply_suppressions(fx.path(), &mut fs);
+    assert_eq!(fs.iter().map(|f| f.severity.as_str()).collect::<Vec<_>>(), vec!["info", "warning", "warning"]);
+    assert_eq!(fs[0].message, "removed since PHP 5.4 (old)");
+}
+
+#[test]
+fn wordpress_api_download_link_is_used_for_every_version() {
+    let v = serde_json::json!({
+        "name": "WP Umbrella &#8211; Update", "version": "2.28.1", "active_installs": 90000,
+        "download_link": "https://downloads.wordpress.org/plugin/wp-health.v2.28.1.zip",
+        "versions": {"v2.9.4": "https://downloads.wordpress.org/plugin/wp-health.v2.9.4.zip", "trunk": "https://downloads.wordpress.org/plugin/wp-health.zip", "2.0": "https://downloads.wordpress.org/plugin/wp-health.2.0.zip"},
+        "tags": {"a": "backup"}
+    });
+    let info = crate::parse_wp_info(&v).unwrap();
+    assert_eq!(info.display_name.as_deref(), Some("WP Umbrella \u{2013} Update"));
+    assert_eq!(info.zip_url(None).unwrap(), "https://downloads.wordpress.org/plugin/wp-health.v2.28.1.zip");
+    assert_eq!(info.zip_url(Some("2.28.1")).unwrap(), "https://downloads.wordpress.org/plugin/wp-health.v2.28.1.zip", "not {{slug}}.{{version}}.zip");
+    assert_eq!(info.zip_url(Some("2.0")).unwrap(), "https://downloads.wordpress.org/plugin/wp-health.2.0.zip");
+    assert!(info.zip_url(Some("1.9")).is_err(), "unpublished version");
+    // Stable tag "trunk": the current version is only published as {slug}.zip.
+    let trunk = crate::parse_wp_info(&serde_json::json!({"version": "5.2.3.03", "download_link": "https://downloads.wordpress.org/plugin/wp-phpmyadmin-extension.zip", "versions": []})).unwrap();
+    assert_eq!(trunk.zip_url(Some("5.2.3.03")).unwrap(), "https://downloads.wordpress.org/plugin/wp-phpmyadmin-extension.zip");
+    let evil = crate::parse_wp_info(&serde_json::json!({"version": "1", "download_link": "https://example.com/x.zip"})).unwrap();
+    assert!(evil.zip_url(None).is_err());
+    assert!(crate::parse_wp_info(&serde_json::json!({"error": "Plugin not found."})).is_err());
+}
+
+#[test]
+fn scan_dir_metadata_is_stored_and_exported() {
+    let fx = Fixture::new("meta");
+    let conn = crate::db::open(fx.path().join("t.sqlite").to_str().unwrap()).unwrap();
+    let eco = "wordpress-plugin";
+    crate::store_dir_meta(&conn, eco, "wp-file-manager", Some("File Manager &amp; More"), Some(1_000_000)).unwrap();
+    // Flags not given keep the stored values; nothing given is a no-op.
+    crate::store_dir_meta(&conn, eco, "wp-file-manager", None, Some(900_000)).unwrap();
+    crate::store_dir_meta(&conn, eco, "wp-file-manager", None, None).unwrap();
+    assert!(crate::store_dir_meta(&conn, eco, "x", None, Some(-1)).is_err());
+    let run = crate::trace::Run::start(&conn, "test", serde_json::json!({})).unwrap();
+    crate::store(&conn, &run.id, eco, "wp-file-manager", "8.0.7", &[], &[], &[("8.4".to_string(), vec![])], 0, &|_| false).unwrap();
+    let out = fx.path().join("out");
+    crate::export(&conn, &out).unwrap();
+    let doc: serde_json::Value = serde_json::from_slice(&std::fs::read(out.join("v1/wordpress-plugin/wp-file-manager/8.0.7.json")).unwrap()).unwrap();
+    assert_eq!(doc["display_name"], "File Manager & More");
+    assert_eq!(doc["active_installs"], 900_000);
 }
