@@ -620,11 +620,11 @@ jobs:
         if: github.event_name == 'schedule' || inputs.deploy
         env:
           GH_TOKEN: ${{ github.token }}
-          # Files per deployment the host accepts (Vercel: 15,000 in its docs for CLI uploads; the Git
-          # deployment figure is UNVERIFIED, see docs/ops/runbook.md section 6). Over it, we still push (the
+          # Files per deployment the host accepts: a 32,114-file Git deployment succeeded on 2026-11-21, so we
+          # guard at 30,000 (see docs/ops/runbook.md section 6). Over it, we still push (the
           # site branch is the scan state the next run builds on) but turn the run red: the host may keep
           # serving the previous deployment.
-          MAX_SITE_FILES: "15000"
+          MAX_SITE_FILES: "30000" # 32,114 files deployed successfully in a test on 2026-11-21
         run: |
           files=$(find public -type f | wc -l)
           case "$MAX_SITE_FILES" in ''|*[!0-9]*) echo "::error::MAX_SITE_FILES must be a number"; exit 1;; esac
