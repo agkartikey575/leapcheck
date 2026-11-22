@@ -1646,7 +1646,7 @@ fn n25_n27_hand_checked_never_reached_errors_are_info_for_that_version_only() {
 #[test]
 fn shipped_not_reached_entries_load_and_match_exact_versions() {
     let rules = rules();
-    assert!(rules.summary().contains("not_reached=7"), "{}", rules.summary());
+    assert!(rules.summary().contains("not_reached=10"), "{}", rules.summary());
     let cases = [
         ("wp-db-backup", "2.5.3", "wp-db-backup.php", "FunctionUse.RemovedFunctions.eachDeprecatedRemoved"),
         ("contact-form-plugin", "4.4.1", "contact_form.php", "FunctionUse.RemovedFunctions.eachDeprecatedRemoved"),
@@ -1655,6 +1655,9 @@ fn shipped_not_reached_entries_load_and_match_exact_versions() {
         ("backuply", "1.6.0", "lib/ftp.php", "FunctionUse.RemovedFunctions.eachDeprecatedRemoved"),
         ("matomo", "5.13.1", "app/libs/HTML/QuickForm2/Renderer/Default.php", "FunctionUse.RemovedFunctions.eachDeprecatedRemoved"),
         ("matomo", "5.13.1", "app/vendor/lox/xhprof/xhprof_lib/utils/xhprof_runs.php", "FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved"),
+        ("maxbuttons", "9.8.6", "classes/buttons.php", "ParameterValues.NewExitAsFunctionCall.TypeError"),
+        ("all-in-one-favicon", "4.8", "includes/aio-favicon-backend.php", "FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved"),
+        ("wordpress-importer", "0.9.7", "parsers/class-wxr-parser-simplexml.php", "FunctionUse.RemovedFunctions.libxml_disable_entity_loaderDeprecated"),
     ];
     for (slug, ver, file, rule) in cases {
         let mut fs = vec![pf(rule, "error", file, 1)];
@@ -1784,4 +1787,244 @@ fn scan_dir_metadata_is_stored_and_exported() {
     let doc: serde_json::Value = serde_json::from_slice(&std::fs::read(out.join("v1/wordpress-plugin/wp-file-manager/8.0.7.json")).unwrap()).unwrap();
     assert_eq!(doc["display_name"], "File Manager & More");
     assert_eq!(doc["active_installs"], 900_000);
+}
+
+// ---------- live-data review, round 4 ----------
+//
+// Real code patterns from scanned plugins; rule IDs and messages as phpcs reports them for PHP 8.4.
+
+const RESOURCE_MSG: &str = "'resource' is a soft reserved keyword as of PHP version 7.0 and should not be used to name a class, interface, trait or enum or as part of a namespace (class declaration)";
+const NUMERIC_MSG: &str = "'numeric' is a soft reserved keyword as of PHP version 7.0 and should not be used to name a class, interface, trait or enum or as part of a namespace (class declaration)";
+const ENUM_MSG: &str = "'enum' is a soft reserved keyword as of PHP version 8.1 and should not be used to name a class, interface, trait or enum or as part of a namespace (class declaration)";
+const DUNDER_MSG: &str = "Function name \"__pl\" is discouraged; PHP has reserved all function names with a double underscore prefix for future use.";
+const INTEGER_MSG: &str = "'integer' is not a valid parameter type declaration. Did you mean int ?";
+const STRIP_TAGS_MSG: &str = "When passing strip_tags() the $allowed_tags parameter as an array, the tags should not be enclosed in <> brackets. Found: array('<a>')";
+const INI_URL_INCLUDE_MSG: &str = "INI directive 'allow_url_include' is deprecated since PHP 7.4";
+const INI_LINE_ENDINGS_MSG: &str = "INI directive 'auto_detect_line_endings' is deprecated since PHP 8.1";
+const USER_ERROR_RULE: &str = "ParameterValues.RemovedTriggerErrorLevel.Deprecated";
+const USER_ERROR_MSG: &str = "Passing E_USER_ERROR to trigger_error() is deprecated since 8.4. Throw an exception or call exit with a string message instead.";
+const LIBXML_RULE: &str = "FunctionUse.RemovedFunctions.libxml_disable_entity_loaderDeprecated";
+const LIBXML_MSG: &str = "Function libxml_disable_entity_loader() is deprecated since PHP 8.0";
+
+#[test]
+fn r4_f1_names_that_never_change_on_upgrade_are_info() {
+    // php-mcp-schema (premium-addons, formidable, mcp-adapter), admin-menu-editor, pagelayer,
+    // phpseclib (hummingbird, duplicator), wp-security-audit-log.
+    let src = "<?php\nnamespace Mcp\\Schema;\nclass Resource extends Schema {}\nclass Numeric {}\nclass Enum extends Schema {}\nfunction __pl( $s ) { return $s; }\nfunction f( Integer $k1 ) { return 1; }\n$s = strip_tags( $s, array( '<a>' ) );\n";
+    let fx = Fixture::new("r4f1").file("a.php", src);
+    let mut fs = vec![
+        pfm("Keywords.ForbiddenNames.resourceFound", "warning", "a.php", 3, RESOURCE_MSG),
+        pfm("Keywords.ForbiddenNames.numericFound", "warning", "a.php", 4, NUMERIC_MSG),
+        pfm("Keywords.ForbiddenNames.enumFound", "warning", "a.php", 5, ENUM_MSG),
+        pfm("FunctionNameRestrictions.ReservedFunctionNames.FunctionDoubleUnderscore", "warning", "a.php", 6, DUNDER_MSG),
+        pfm("FunctionDeclarations.NewParamTypeDeclarations.InvalidLongTypeFound", "warning", "a.php", 7, INTEGER_MSG),
+        pfm("ParameterValues.NewStripTagsAllowableTagsArray.Invalid", "warning", "a.php", 8, STRIP_TAGS_MSG),
+    ];
+    full(fx.path(), &mut fs);
+    assert!(fs.iter().all(|f| f.severity == "info"), "{:?}", sev(&fs));
+    assert_eq!(verdict_of(&fs), "compatible");
+    // Narrow: a name that is also a hard reserved keyword, and other messages of the same rules, stay.
+    let mut fs = vec![
+        pfm("Keywords.ForbiddenNames.enumFound", "error", "a.php", 5, "'enum' is a soft reserved keyword as of PHP version 8.1 and a reserved keyword as of PHP version 8.1 and should not be used to name a class, interface, trait or enum or as part of a namespace (class declaration)"),
+        pfm("FunctionDeclarations.NewParamTypeDeclarations.InvalidLongTypeFound", "warning", "a.php", 7, "'boolean' is not a valid parameter type declaration. Did you mean bool ?"),
+        pfm("ParameterValues.NewStripTagsAllowableTagsArray.Found", "error", "a.php", 8, "The strip_tags() function did not accept $allowed_tags to be passed in array format in PHP 7.3 and earlier."),
+    ];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs.iter().map(|f| f.severity.as_str()).collect::<Vec<_>>(), vec!["error", "warning", "error"]);
+}
+
+#[test]
+fn r4_f2_ini_get_of_a_deprecated_directive_is_info_but_ini_set_stays() {
+    // wp-reviews-plugin-for-google, hide-my-wp, anti-spam; tablepress/https-redirection set it.
+    let src = "<?php\nif ( ini_get( 'allow_url_include' ) ) {\n\t$warn = true;\n}\n$on = (bool) ini_get('allow_url_include');\n@ini_set('auto_detect_line_endings', true);\nini_set( 'allow_url_include', ini_get( 'allow_url_include' ) );\n";
+    let fx = Fixture::new("r4f2").file("a.php", src);
+    let mut fs = vec![
+        pfm("IniDirectives.RemovedIniDirectives.allow_url_includeDeprecated", "warning", "a.php", 2, INI_URL_INCLUDE_MSG),
+        pfm("IniDirectives.RemovedIniDirectives.allow_url_includeDeprecated", "warning", "a.php", 5, INI_URL_INCLUDE_MSG),
+    ];
+    full(fx.path(), &mut fs);
+    assert!(fs.iter().all(|f| f.severity == "info"), "{:?}", sev(&fs));
+    assert_eq!(verdict_of(&fs), "compatible");
+    let mut fs = vec![
+        pfm("IniDirectives.RemovedIniDirectives.auto_detect_line_endingsDeprecated", "warning", "a.php", 6, INI_LINE_ENDINGS_MSG),
+        pfm("IniDirectives.RemovedIniDirectives.allow_url_includeDeprecated", "warning", "a.php", 7, INI_URL_INCLUDE_MSG),
+    ];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs.iter().map(|f| f.severity.as_str()).collect::<Vec<_>>(), vec!["warning", "warning"]);
+    assert_eq!(verdict_of(&fs), "issues");
+}
+
+const PSR7_TO_STRING: &str = "<?php\nnamespace GuzzleHttp\\Psr7;\nclass Stream {\n    public function __toString(): string\n    {\n        try {\n            if ($this->isSeekable()) {\n                $this->seek(0);\n            }\n            return $this->getContents();\n        } catch (\\Throwable $e) {\n            if (\\PHP_VERSION_ID >= 70400) {\n                throw $e;\n            }\n            \\trigger_error(\\sprintf('%s::__toString exception: %s', self::class, (string) $e), \\E_USER_ERROR);\n            return '';\n        }\n    }\n}\n";
+
+#[test]
+fn r4_f3_rethrow_after_new_php_check_is_an_early_exit() {
+    // guzzle psr7 Stream/PumpStream/StreamDecoratorTrait (wordpress-seo, wp-smushit, duplicator).
+    let line = line_of(PSR7_TO_STRING, "trigger_error");
+    let fx = Fixture::new("r4f3").file("vendor/guzzlehttp/psr7/src/Stream.php", PSR7_TO_STRING);
+    let mut fs = vec![pfm(USER_ERROR_RULE, "warning", "vendor/guzzlehttp/psr7/src/Stream.php", line, USER_ERROR_MSG)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info", "{}", fs[0].message);
+    assert_eq!(verdict_of(&fs), "compatible");
+    // Braceless form.
+    let braceless = PSR7_TO_STRING.replace("if (\\PHP_VERSION_ID >= 70400) {\n                throw $e;\n            }", "if (\\PHP_VERSION_ID >= 70400) throw $e;");
+    let fx = Fixture::new("r4f3b").file("s.php", &braceless);
+    let mut fs = vec![pfm(USER_ERROR_RULE, "warning", "s.php", line_of(&braceless, "trigger_error"), USER_ERROR_MSG)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    // Not an early exit: throwing a new exception on new PHP (the code refuses to run there),
+    // an old-PHP check, and a throw after a negated feature check (fails on new PHP).
+    for (from, to) in [
+        ("throw $e;", "throw new \\RuntimeException('unsupported');"),
+        (">= 70400", "< 70400"),
+    ] {
+        let s = PSR7_TO_STRING.replace(from, to);
+        let fx = Fixture::new("r4f3n").file("s.php", &s);
+        let mut fs = vec![pfm(USER_ERROR_RULE, "warning", "s.php", line_of(&s, "trigger_error"), USER_ERROR_MSG)];
+        full(fx.path(), &mut fs);
+        assert_eq!(fs[0].severity, "warning", "{to}");
+    }
+    let neg = "<?php\nfunction f($e) {\n    if ( ! function_exists( 'create_function' ) ) {\n        throw $e;\n    }\n    return create_function( '', 'return 1;' );\n}\n";
+    let fx = Fixture::new("r4f3neg").file("n.php", neg);
+    let mut fs = vec![pfm("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "n.php", 6, CREATE_FUNCTION_MSG)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "error");
+}
+
+#[test]
+fn r4_f4_guard_held_in_a_variable() {
+    // astra-sites st-wxr-importer.php and pojo-accessibility svg-sanitizer.php.
+    let astra = "<?php\nclass Importer {\n\tpublic function sanitize( $content ) {\n\t\t// If the server's PHP version is 8 or up, make sure to disable the ability to load external entities.\n\t\t$php_version_under_eight = version_compare( PHP_VERSION, '8.0.0', '<' );\n\t\tif ( $php_version_under_eight ) {\n\t\t\t// phpcs:disable Generic.PHP.DeprecatedFunctions.Deprecated\n\t\t\t$libxml_disable_entity_loader = libxml_disable_entity_loader( true );\n\t\t\t// phpcs:enable Generic.PHP.DeprecatedFunctions.Deprecated\n\t\t}\n\t\t$libxml_use_internal_errors = libxml_use_internal_errors( true );\n\t\t$sanitized = $dom->saveXML( $dom->documentElement, LIBXML_NOEMPTYTAG );\n\n\t\t// Restore defaults.\n\t\tif ( $php_version_under_eight && isset( $libxml_disable_entity_loader ) ) {\n\t\t\tlibxml_disable_entity_loader( $libxml_disable_entity_loader );\n\t\t}\n\t\treturn $sanitized;\n\t}\n}\n";
+    // sabre/xml Reader.php (woocommerce-pdf-invoices-packing-slips).
+    let sabre = "<?php\nclass Reader extends \\XMLReader {\n    public function parse(): array\n    {\n        $previousEntityState = null;\n        $shouldCallLibxmlDisableEntityLoader = (\\LIBXML_VERSION < 20900);\n        if ($shouldCallLibxmlDisableEntityLoader) {\n            $previousEntityState = libxml_disable_entity_loader(true);\n        }\n        try {\n            $result = $this->parseCurrentElement();\n        } finally {\n            if ($shouldCallLibxmlDisableEntityLoader) {\n                libxml_disable_entity_loader($previousEntityState);\n            }\n        }\n        return $result;\n    }\n}\n";
+    // jetpack class-jetpack-podcast-feed-locator.php.
+    let jetpack = "<?php\nclass Locator {\n\tprivate function safely_load_xml( $xml ) {\n\t\t$disable_entity_loader = PHP_VERSION_ID < 80000;\n\n\t\tif ( $disable_entity_loader ) {\n\t\t\t// phpcs:ignore Generic.PHP.DeprecatedFunctions.Deprecated\n\t\t\t$loader = libxml_disable_entity_loader( true );\n\t\t}\n\t\t$return = new DOMDocument();\n\t\tif ( $disable_entity_loader && isset( $loader ) ) {\n\t\t\tlibxml_disable_entity_loader( $loader );\n\t\t}\n\t\treturn $return;\n\t}\n}\n";
+    for (name, src) in [("astra", astra), ("sabre", sabre), ("jetpack", jetpack)] {
+        let fx = Fixture::new("r4f4").file("a.php", src);
+        let mut fs: Vec<Finding> = src.lines().enumerate().filter(|(_, l)| l.contains("libxml_disable_entity_loader(")).map(|(k, _)| pfm(LIBXML_RULE, "warning", "a.php", k as u32 + 1, LIBXML_MSG)).collect();
+        assert_eq!(fs.len(), 2, "{name}");
+        full(fx.path(), &mut fs);
+        assert!(fs.iter().all(|f| f.severity == "info"), "{name}: {:?}", sev(&fs));
+        assert_eq!(verdict_of(&fs), "compatible", "{name}");
+    }
+    // A feature check in a variable guards a removed function (errors only).
+    let has = "<?php\n$has = function_exists( 'create_function' );\nif ( $has ) {\n\t$f = create_function( '', 'return 1;' );\n}\n";
+    let fx = Fixture::new("r4f4has").file("a.php", has);
+    let mut fs = vec![pfm("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "a.php", 4, CREATE_FUNCTION_MSG)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+    // Not guards: a new-PHP check, a combined expression, a negated variable, a variable
+    // reassigned after the check, and a negated feature check.
+    for bad in [
+        "$v = version_compare( PHP_VERSION, '8.0.0', '>=' );\nif ( $v ) {",
+        "$v = PHP_VERSION_ID < 80000 || $force;\nif ( $v ) {",
+        "$v = PHP_VERSION_ID < 80000;\nif ( ! $v ) {",
+        "$v = PHP_VERSION_ID < 80000;\n$v = true;\nif ( $v ) {",
+        "$v = ! function_exists( 'libxml_disable_entity_loader' );\nif ( $v ) {",
+        "$v = PHP_VERSION_ID >= 80000;\nif ( $v && $x ) {\n} else {",
+    ] {
+        let src = format!("<?php\n{bad}\n\t$l = libxml_disable_entity_loader( true );\n}}\n");
+        let fx = Fixture::new("r4f4bad").file("a.php", &src);
+        let mut fs = vec![pfm(LIBXML_RULE, "warning", "a.php", line_of(&src, "$l = libxml"), LIBXML_MSG)];
+        full(fx.path(), &mut fs);
+        assert_eq!(fs[0].severity, "warning", "{bad}");
+    }
+    // The else part of a new-PHP variable check runs only on old PHP.
+    let src = "<?php\n$is_new = PHP_VERSION_ID >= 80000;\nif ( $is_new ) {\n\t$l = null;\n} else {\n\t$l = libxml_disable_entity_loader( true );\n}\n";
+    let fx = Fixture::new("r4f4else").file("a.php", src);
+    let mut fs = vec![pfm(LIBXML_RULE, "warning", "a.php", 6, LIBXML_MSG)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info");
+}
+
+#[test]
+fn r4_f5_not_reached_also_applies_to_warnings() {
+    // wordpress-importer parsers/class-wxr-parser-simplexml.php: null sentinel.
+    let src = "<?php\n\t\t$dom       = new DOMDocument();\n\t\t$old_value = null;\n\t\tif ( function_exists( 'libxml_disable_entity_loader' ) && PHP_VERSION_ID < 80000 ) {\n\t\t\t$old_value = libxml_disable_entity_loader( true );\n\t\t}\n\t\t$success = $dom->loadXML( file_get_contents( $file ) );\n\t\tif ( ! is_null( $old_value ) ) {\n\t\t\tlibxml_disable_entity_loader( $old_value );\n\t\t}\n";
+    let file = "parsers/class-wxr-parser-simplexml.php";
+    let fx = Fixture::new("r4f5").file(file, src);
+    let fresh = || vec![pfm(LIBXML_RULE, "warning", file, 5, LIBXML_MSG), pfm(LIBXML_RULE, "warning", file, 9, LIBXML_MSG)];
+    let mut fs = fresh();
+    full(fx.path(), &mut fs);
+    assert_eq!(fs.iter().map(|f| f.severity.as_str()).collect::<Vec<_>>(), vec!["info", "warning"], "the scan alone cannot prove this");
+    rules().apply_not_reached("wordpress-importer", "0.9.7", &mut fs);
+    assert!(fs.iter().all(|f| f.severity == "info"), "{:?}", sev(&fs));
+    assert!(fs[1].message.starts_with("Checked by hand, this code is not reached ("), "{}", fs[1].message);
+    assert_eq!(verdict_of(&fs), "compatible");
+    let mut fs = fresh();
+    full(fx.path(), &mut fs);
+    rules().apply_not_reached("wordpress-importer", "0.9.8", &mut fs);
+    assert_eq!(verdict_of(&fs), "issues", "a new version is checked again");
+}
+
+#[test]
+fn r4_f7_hand_checked_breaks_are_not_reached() {
+    // maxbuttons classes/buttons.php: exit(true) after an exit that always runs.
+    let maxbuttons = "<?php\nclass maxButtons {\n\tpublic static function ajax_action() {\n\t\t$redirect = add_query_arg('page', $page, $redirect);\n\n\t\tif (isset($redirect)) {\n\t\t\t$response = array('redirection' => $redirect);\n\t\t\techo json_encode($response);\n\t\t\texit();\n\t\t}\n\n\t\texit(true);\n\t}\n}\n";
+    let fx = Fixture::new("r4f7").file("classes/buttons.php", maxbuttons);
+    let mut fs = vec![
+        pfm("ParameterValues.NewExitAsFunctionCall.TypeError", "error", "classes/buttons.php", 12, "Passing a boolean to exit() will result in a TypeError since PHP 8.4. Found: \"true\""),
+        pfm("FunctionDeclarations.RemovedImplicitlyNullableParam.Deprecated", "warning", "assets/libraries/scssphp/src/Parser.php", 143, "Implicitly marking a parameter as nullable is deprecated since PHP 8.4."),
+    ];
+    full(fx.path(), &mut fs);
+    assert_eq!(verdict_of(&fs), "breaks");
+    rules().apply_not_reached("maxbuttons", "9.8.6", &mut fs);
+    assert_eq!(verdict_of(&fs), "issues");
+    // all-in-one-favicon: create_function only for a notice the settings page never sets.
+    let mut fs = vec![pfm("FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved", "error", "includes/aio-favicon-backend.php", 346, CREATE_FUNCTION_MSG)];
+    rules().apply_not_reached("all-in-one-favicon", "4.8", &mut fs);
+    assert_eq!(verdict_of(&fs), "compatible");
+}
+
+/// Runs the real analyzer when tools/php is installed (skipped otherwise).
+fn real_phpcs(root: &Path) -> Option<Vec<Finding>> {
+    use crate::model::Analyzer;
+    let tools = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tools/php");
+    let a = crate::php::PhpCompatibility::locate(&tools).ok()?;
+    Some(a.analyze(root, "8.4").expect("phpcs runs"))
+}
+
+#[test]
+fn r4_f6_phpcs_annotations_in_plugin_code_do_not_hide_findings() {
+    // wp-all-export.php: `phpcs:ignoreFile` with codes still skips the whole file.
+    let export = "<?php\n\n// phpcs:ignoreFile WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound,WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound -- legitimate plugin prefixes\ndefined( 'ABSPATH' ) || exit;\nclass PMXE_Plugin {\n\t\tpublic function activation() {\n\t\t\t// uncaught exception doesn't prevent plugin from being activated, therefore replace it with fatal error so it does\n            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_trigger_error\n            set_exception_handler(function($e) {trigger_error($e->getMessage(), E_USER_ERROR); });\n\t\t}\n}\n";
+    // google-analytics-for-wordpress site-notes/Controller.php: bare `phpcs:ignore`.
+    let notes = "<?php\nclass Controller {\n\tpublic function export_notes() {\n\t\t$outstream = fopen( 'php://output', 'w' );\n\t\t// phpcs:ignore\n\t\tfputcsv( $outstream, $headers );\n\t\tforeach ( $rows as $row ) {\n\t\t\t// phpcs:ignore\n\t\t\tfputcsv( $outstream, $row );\n\t\t}\n\t}\n}\n";
+    // jetpack: targeted ignores on code guarded by a variable stay guarded.
+    let jetpack = "<?php\nclass Locator {\n\tprivate function safely_load_xml( $xml ) {\n\t\t$disable_entity_loader = PHP_VERSION_ID < 80000;\n\t\tif ( $disable_entity_loader ) {\n\t\t\t// phpcs:ignore Generic.PHP.DeprecatedFunctions.Deprecated, PHPCompatibility.FunctionUse.RemovedFunctions.libxml_disable_entity_loaderDeprecated\n\t\t\t$loader = libxml_disable_entity_loader( true );\n\t\t}\n\t\t$return = new DOMDocument();\n\t\tif ( $disable_entity_loader && isset( $loader ) ) {\n\t\t\t// phpcs:ignore Generic.PHP.DeprecatedFunctions.Deprecated, PHPCompatibility.FunctionUse.RemovedFunctions.libxml_disable_entity_loaderDeprecated\n\t\t\tlibxml_disable_entity_loader( $loader );\n\t\t}\n\t\treturn $return;\n\t}\n\tpublic function amp_host( $host ) {\n\t\tif ( function_exists( 'idn_to_utf8' ) ) {\n\t\t\t$variant = defined( 'INTL_IDNA_VARIANT_UTS46' )\n\t\t\t\t? INTL_IDNA_VARIANT_UTS46\n\t\t\t\t// phpcs:ignore PHPCompatibility.Constants.RemovedConstants.intl_idna_variant_2003DeprecatedRemoved\n\t\t\t\t: INTL_IDNA_VARIANT_2003;\n\t\t\t$host = idn_to_utf8( $host, IDNA_DEFAULT, $variant );\n\t\t}\n\t\treturn $host;\n\t}\n\tpublic function free( $public_key ) {\n\t\tif ( PHP_VERSION_ID < 80000 ) {\n\t\t\topenssl_free_key( $public_key ); // phpcs:ignore PHPCompatibility.FunctionUse.RemovedFunctions.openssl_free_keyDeprecated\n\t\t}\n\t}\n}\n";
+    for (name, src, count, want) in [("export", export, 1, "issues"), ("notes", notes, 2, "issues"), ("jetpack", jetpack, 4, "compatible")] {
+        let fx = Fixture::new("r4f6").file("plugin.php", src);
+        let Some(mut fs) = real_phpcs(fx.path()) else {
+            eprintln!("skipped: phpcs not installed in tools/php");
+            return;
+        };
+        assert_eq!(fs.len(), count, "{name}: {:?}", sev(&fs));
+        full(fx.path(), &mut fs);
+        assert_eq!(verdict_of(&fs), want, "{name}: {:?}", sev(&fs));
+    }
+}
+
+#[test]
+fn r4_intl_successor_constant_ternary_inside_intl_check_is_guarded() {
+    // jetpack class.json-api-endpoints.php (hidden by `phpcs:ignore` until annotations were ignored).
+    let src = "<?php\nfunction amp_host( $host ) {\n\t\tif ( function_exists( 'idn_to_utf8' ) ) {\n\t\t\t// The third parameter is set explicitly to prevent issues with newer PHP versions compiled with an old ICU version.\n\t\t\t$variant = defined( 'INTL_IDNA_VARIANT_UTS46' )\n\t\t\t\t? INTL_IDNA_VARIANT_UTS46\n\t\t\t\t// phpcs:ignore PHPCompatibility.Constants.RemovedConstants.intl_idna_variant_2003DeprecatedRemoved\n\t\t\t\t: INTL_IDNA_VARIANT_2003; // @phan-suppress-current-line PhanUndeclaredConstant\n\t\t\t$host = idn_to_utf8( $host, IDNA_DEFAULT, $variant );\n\t\t}\n\t\treturn $host;\n}\n";
+    let rule = "Constants.RemovedConstants.intl_idna_variant_2003DeprecatedRemoved";
+    let msg = "The constant \"INTL_IDNA_VARIANT_2003\" is deprecated since PHP 7.2 and removed since PHP 8.0";
+    let fx = Fixture::new("r4intl").file("a.php", src);
+    let mut fs = vec![pfm(rule, "error", "a.php", line_of(src, ": INTL_IDNA_VARIANT_2003"), msg)];
+    full(fx.path(), &mut fs);
+    assert_eq!(fs[0].severity, "info", "{}", fs[0].message);
+    assert_eq!(verdict_of(&fs), "compatible");
+    // Without the intl check (the else side runs where intl is missing), on the then side, or
+    // after the intl block closed, it stays an error.
+    for s in [
+        src.replace("if ( function_exists( 'idn_to_utf8' ) ) {", "if ( $x ) {"),
+        src.replace("if ( function_exists( 'idn_to_utf8' ) ) {", "if ( ! function_exists( 'idn_to_utf8' ) ) {"),
+        src.replace("? INTL_IDNA_VARIANT_UTS46\n\t\t\t\t// phpcs:ignore PHPCompatibility.Constants.RemovedConstants.intl_idna_variant_2003DeprecatedRemoved\n\t\t\t\t: INTL_IDNA_VARIANT_2003;", "? INTL_IDNA_VARIANT_2003\n\t\t\t\t// x\n\t\t\t\t: INTL_IDNA_VARIANT_UTS46;"),
+        src.replace("if ( function_exists( 'idn_to_utf8' ) ) {", "if ( function_exists( 'idn_to_utf8' ) ) { $a = 1; }\n\t\t{"),
+    ] {
+        let fx = Fixture::new("r4intln").file("a.php", &s);
+        let mut fs = vec![pfm(rule, "error", "a.php", line_of(&s, "INTL_IDNA_VARIANT_2003"), msg)];
+        full(fx.path(), &mut fs);
+        assert_eq!(fs[0].severity, "error", "{s}");
+    }
 }

@@ -57,6 +57,9 @@ impl Analyzer for PhpCompatibility {
                 "--report=json",
                 "-q",
                 "--parallel=4",
+                // Comments in scanned code (`phpcs:ignore`, `phpcs:ignoreFile`, `phpcs:disable`) must
+                // not hide findings: they are written for the authors' own coding-standard runs.
+                "--ignore-annotations",
             ])
             .arg(format!("--file-list={}", list.display()))
             .output();

@@ -11,7 +11,7 @@ version, so bump it when a rule changes and re-scan the affected packages.
 | `retire-jsrepository.json` | Finds JS libraries (often minified) and known vulnerabilities | upstream RetireJS | Apache-2.0 open data (see below) |
 | `suppressions.json` | Known false positives and rules that do not break on an upgrade (remove, or lower to warning / info) | LeapCheck | our own, checked against real plugins |
 | `confirmed-breaks.json` | Errors in bundled library code that were checked by hand and are reached by the package, so they keep the "breaks" verdict | LeapCheck | our own, each entry checked in the real package |
-| `not-reached.json` | Errors in one exact package version that were checked by hand and never run, so they become info | LeapCheck | our own, each entry checked in the real package |
+| `not-reached.json` | Errors and warnings in one exact package version that were checked by hand and never run, so they become info | LeapCheck | our own, each entry checked in the real package |
 | `wp-polyfills.json` | New PHP functions WordPress core defines itself on older PHP (`wp-includes/compat.php`) | LeapCheck | WordPress core source (GPL), function names and versions only |
 
 Current contents (v1, 2026-11-21): **41 PHP signatures, 25 extensions, 76 RetireJS library entries (798 vulnerability records)**.
@@ -182,10 +182,10 @@ entry only after reading the code path that calls the library.
   "reviewed_by_date": "2026-11-19"}]
 ```
 
-The mirror of `confirmed-breaks.json`: an error that was checked by hand and is never reached (a
-function nothing calls, a branch no caller can enter). A static scan cannot prove this, so each
+The mirror of `confirmed-breaks.json`: an error or warning that was checked by hand and is never
+reached (a function nothing calls, a branch no caller can enter). A static scan cannot prove this, so each
 entry is pinned to the **exact** package `slug`, `version`, `file` (relative to the package root)
-and `rule_id` (exact, no patterns). A matching error becomes info with the message prefix
+and `rule_id` (exact, no patterns). A matching error or warning becomes info with the message prefix
 "Checked by hand, this code is not reached (<reason>): ". A new package version does not match, so
 it is checked again automatically. `reason` is shown to site visitors; `reviewed_by_date` is
 documentation. Add an entry only after reading every caller of the code in that version.

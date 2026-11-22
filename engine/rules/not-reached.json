@@ -54,5 +54,29 @@
     "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.eachDeprecatedRemoved",
     "reason": "each() is only in the is_array() branch of cntctfrm_clean_input(), and its only caller passes the User-Agent string",
     "reviewed_by_date": "2026-11-19"
+  },
+  {
+    "slug": "maxbuttons",
+    "version": "9.8.6",
+    "file": "classes/buttons.php",
+    "rule_id": "PHPCompatibility.ParameterValues.NewExitAsFunctionCall.TypeError",
+    "reason": "exit(true) comes after an unconditional exit: $redirect is always set just before the isset($redirect) branch, which exits first",
+    "reviewed_by_date": "2026-11-22"
+  },
+  {
+    "slug": "all-in-one-favicon",
+    "version": "4.8",
+    "file": "includes/aio-favicon-backend.php",
+    "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.create_functionDeprecatedRemoved",
+    "reason": "create_function() only runs for a non-empty notice, which is set only when the URL contains all-in-one-favicon.php; the settings page (slug all-in-one-favicon) and its save redirect never produce that URL",
+    "reviewed_by_date": "2026-11-22"
+  },
+  {
+    "slug": "wordpress-importer",
+    "version": "0.9.7",
+    "file": "parsers/class-wxr-parser-simplexml.php",
+    "rule_id": "PHPCompatibility.FunctionUse.RemovedFunctions.libxml_disable_entity_loaderDeprecated",
+    "reason": "the restore call only runs when $old_value is not null, and $old_value is only set inside the PHP_VERSION_ID < 80000 branch",
+    "reviewed_by_date": "2026-11-22"
   }
 ]

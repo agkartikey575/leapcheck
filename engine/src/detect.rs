@@ -121,10 +121,10 @@ impl Rules {
         )
     }
 
-    /// Errors listed in rules/not-reached.json for this exact package version (slug, version,
-    /// file and rule ID) become info, with the reviewer's reason in the message.
+    /// Errors and warnings listed in rules/not-reached.json for this exact package version (slug,
+    /// version, file and rule ID) become info, with the reviewer's reason in the message.
     pub fn apply_not_reached(&self, package: &str, version: &str, findings: &mut [crate::model::Finding]) {
-        for f in findings.iter_mut().filter(|f| f.severity == "error") {
+        for f in findings.iter_mut().filter(|f| f.severity == "error" || f.severity == "warning") {
             if let Some(n) = self.not_reached.iter().find(|n| n.slug == package && n.version == version && n.file == f.file && n.rule_id == f.rule_id) {
                 f.severity = "info".into();
                 f.confidence = "low".into();
@@ -565,6 +565,18 @@ const CORE_FUNCTIONS_SINCE: &[(&str, u64)] = &[
     ("array_last", 80500),
 ];
 
+/// Extension constants removed from PHP, the constant that replaced them, and the prefix of a
+/// function of the same extension. The replacement exists on every PHP version that removed the
+/// old one whenever the extension is loaded (intl needs ICU 50.1+ since PHP 7.4, and ICU 4.6+
+/// always defines INTL_IDNA_VARIANT_UTS46).
+const CONSTANT_SUCCESSORS: &[(&str, &str, &str)] = &[("intl_idna_variant_2003", "intl_idna_variant_uts46", "idn_to_")];
+
+/// For a removed constant (lower case): its replacement and the function prefix that shows the
+/// extension is loaded.
+fn constant_successor(old: &str) -> Option<(&'static str, &'static str)> {
+    CONSTANT_SUCCESSORS.iter().find(|(o, _, _)| *o == old).map(|(_, n, f)| (*n, *f))
+}
+
 fn core_function_since(name: &str) -> Option<u64> {
     CORE_FUNCTIONS_SINCE.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
 }
@@ -728,12 +740,19 @@ struct Walk {
     region: Region,
     /// The construct is an early exit: its body is only `return`/`continue`/`break`.
     early_exit: bool,
+    /// The body is only `throw $e;`: a caught exception is re-thrown (guzzle psr7's
+    /// `if (PHP_VERSION_ID >= 70400) { throw $e; }` before its old-PHP fallback). Counts as an
+    /// early exit only after a new-PHP version check: after a negated feature check a throw
+    /// means the code fails on new PHP.
+    rethrow: bool,
 }
 
 /// Follow braces from just after a guard (line `i`, byte `pos`) to the start of line `target`.
 fn walk(lines: &[String], i: usize, pos: usize, target: usize) -> Walk {
     let exit_braced = Regex::new(r"^(return|continue|break)\b[^;{}]*;?$").unwrap();
     let exit_braceless = Regex::new(r"^[^;&{]*?\)\s*(return|continue|break)\b").unwrap();
+    let rethrow_braced = Regex::new(r"^throw\s+\$[a-z0-9_]+\s*;?$").unwrap();
+    let rethrow_braceless = Regex::new(r"^[^;&{]*?\)\s*throw\s+\$[a-z0-9_]+\s*;").unwrap();
     // phase 0: condition / braceless statement; 1: first block; 2: after it (looking for else);
     // 3: else block; 4: after the whole construct.
     let mut phase = 0u8;
@@ -808,12 +827,48 @@ fn walk(lines: &[String], i: usize, pos: usize, target: usize) -> Walk {
         3 => Region::InElse,
         _ => Region::After { scope_ok: min_after >= 0 },
     };
-    let early_exit = if braceless {
-        exit_braceless.is_match(cond.trim())
+    let (early_exit, rethrow) = if braceless {
+        (exit_braceless.is_match(cond.trim()), rethrow_braceless.is_match(cond.trim()))
     } else {
-        !cond.contains("&&") && exit_braced.is_match(block.trim())
+        let plain = !cond.contains("&&");
+        (plain && exit_braced.is_match(block.trim()), plain && rethrow_braced.is_match(block.trim()))
     };
-    Walk { region, early_exit }
+    Walk { region, early_exit, rethrow }
+}
+
+/// An `if` whose condition starts with a variable that holds a check.
+struct VarGuard {
+    /// Byte range of `$name` on the `if` line.
+    start: usize,
+    end: usize,
+    /// `if (!$name ...)`.
+    negated: bool,
+    /// `if ($name && ...)`.
+    and: bool,
+    /// The assigned expression (lower case, leading `(` and spaces removed, no trailing `;`).
+    expr: String,
+}
+
+/// For line `i` of `lines` (lower-case, comments stripped): `if ($v) {` or `if ($v && ...) {` where
+/// the nearest earlier assignment `$v = <expr>;` (up to 300 lines above) assigns a single check,
+/// with no `||`, `&&`, `and`, `or`, `xor` or `?` in it (`$v = PHP_VERSION_ID < 80000;`,
+/// `$v = (\LIBXML_VERSION < 20900);`, `$has = function_exists('x');`).
+fn var_guard(lines: &[String], i: usize) -> Option<VarGuard> {
+    let cond = Regex::new(r"\b(?:else\s*)?if\s*\(\s*(!\s*)?\$([a-z_][a-z0-9_]*)\s*(\)|&&)").unwrap();
+    let c = cond.captures(&lines[i])?;
+    let var = c.get(2).unwrap();
+    let name = regex::escape(var.as_str());
+    let assign = Regex::new(&format!(r"\${name}\s*=\s*([^=;][^;]*);")).unwrap();
+    let combined = Regex::new(r"\|\||&&|\?|\b(and|or|xor)\b").unwrap();
+    for k in (i.saturating_sub(300)..i).rev() {
+        let Some(a) = assign.captures_iter(&lines[k]).last() else { continue };
+        let expr = a[1].trim().trim_start_matches(|ch: char| ch == '(' || ch.is_whitespace()).to_string();
+        if combined.is_match(&expr) {
+            return None;
+        }
+        return Some(VarGuard { start: var.start() - 1, end: var.end(), negated: c.get(1).is_some(), and: &c[3] == "&&", expr });
+    }
+    None
 }
 
 /// Like `apply_guards`, for the given severities (the scan pipeline uses errors and warnings).
@@ -916,6 +971,51 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
                         }
                     }
                 }
+                // `defined('NEW') ? NEW : OLD` for an extension constant that replaced a removed one,
+                // inside a check that the extension is loaded: the old side never runs on new PHP.
+                if ver.is_none() {
+                    if let Some((newer, needs)) = ident.as_deref().and_then(constant_successor) {
+                        let defined = Regex::new(&format!(r#"(!\s*)?\\?defined\s*\(\s*['"]\\{{0,2}}{newer}['"]\s*\)"#)).unwrap();
+                        let loaded = Regex::new(&format!(r#"(!\s*)?\\?function_exists\s*\(\s*['"]\\{{0,2}}{needs}"#)).unwrap();
+                        // A positive check whose block encloses the finding.
+                        let in_ext = (start..i).any(|k| {
+                            loaded.captures_iter(&lines[k]).any(|m| m.get(1).is_none() && walk(lines, k, m.get(0).unwrap().end(), target).region == Region::InBlock)
+                        });
+                        if let Some(c) = defined.captures(line).filter(|_| in_ext) {
+                            ver = Some((c.get(0).unwrap().end(), if c.get(1).is_some() { VerDir::Old } else { VerDir::New }));
+                            ver_start = c.get(0).unwrap().start();
+                        }
+                    }
+                }
+            }
+            // The check is held in a variable: `$v = version_compare(PHP_VERSION, '8.0.0', '<');`
+            // or `$has = function_exists('x');`, then `if ($v) {` / `if ($v && ...) {`.
+            if pos_end.is_none() && neg_end.is_none() && ver.is_none() && new_only.is_none() {
+                if let Some(g) = var_guard(lines, i) {
+                    let ident_hit = ident_re.as_ref().and_then(|re| re.captures(&g.expr)).filter(|c| {
+                        // The whole expression must be the check itself.
+                        c.get(0).unwrap().start() == 0 && !other_core(&g.expr, c.get(0).unwrap().end(), ident.as_deref().unwrap_or(""))
+                    });
+                    if let Some(c) = ident_hit {
+                        if (c.get(1).is_some()) == g.negated {
+                            pos_end = Some(g.end);
+                        } else if !g.and {
+                            neg_end = Some(g.end);
+                        }
+                    } else {
+                        let body = g.expr.trim_start_matches(|c: char| c == '!' || c == '(' || c == '\\' || c.is_whitespace());
+                        let negated = g.negated != (g.expr[..g.expr.len() - body.len()].matches('!').count() % 2 == 1);
+                        let dir = version_guard.find(body).filter(|m| m.start() == 0).and_then(|_| version_dir(body, floor));
+                        if let Some(d) = dir {
+                            let d = if negated { if d == VerDir::Old { VerDir::New } else { VerDir::Old } } else { d };
+                            // `if ($new && x) {} else {...}`: the else part also runs on new PHP.
+                            if d == VerDir::Old || !g.and {
+                                ver = Some((g.end, d));
+                                ver_start = g.start;
+                            }
+                        }
+                    }
+                }
             }
             let distance = target - i;
             if let Some(pos) = pos_end.or(new_only).or(match ver {
@@ -978,7 +1078,8 @@ pub fn apply_guards_to(root: &Path, findings: &mut [crate::model::Finding], seve
                     continue;
                 }
                 let w = walk(lines, i, pos, target);
-                if (else_ok && w.region == Region::InElse) || (w.early_exit && w.region == (Region::After { scope_ok: true })) || ternary_else(Some(&w)) {
+                let exits = w.early_exit || (else_ok && w.rethrow);
+                if (else_ok && w.region == Region::InElse) || (exits && w.region == (Region::After { scope_ok: true })) || ternary_else(Some(&w)) {
                     guarded = true;
                 }
                 continue;
@@ -1339,6 +1440,8 @@ pub fn apply_suppressions(rules_dir: &Path, findings: &mut Vec<crate::model::Fin
 ///  - `NewLateStaticBinding.OutsideClassScope` in a file that declares no class/trait/enum (a
 ///    template included from a class method);
 ///  - `RemovedOrphanedParent` on a line with no `parent::` (a bare `parent` word);
+///  - a deprecated (not removed) INI directive read with `ini_get()`: PHP only reports it when
+///    the directive is enabled or set, never on a read (`ini_set()` stays reported);
 ///  - `define()` whose third argument is a variable passed through (e.g. a wrapper function);
 ///  - `RemovedTernaryAssociativity` inside a `match` expression: such a file only compiles on
 ///    PHP 8, where a real unparenthesised nested ternary is a compile error, so the upgrade
@@ -1355,6 +1458,7 @@ pub fn drop_rule_misreads(root: &Path, findings: &mut Vec<crate::model::Finding>
     let type_decl = Regex::new(r"(?mi)^\s*(abstract\s+|final\s+|readonly\s+)*(class|trait|enum)\s+[a-z_]").unwrap();
     let implode_call = Regex::new(r"(?i)(^|[^a-z0-9_$>:\\])\\?(implode|join)\s*\(").unwrap();
     let parent_call = Regex::new(r"(?i)\bparent\s*::").unwrap();
+    let ini_directive = Regex::new(r"^INI directive '([^']+)' is deprecated").unwrap();
     let mut files: BTreeMap<String, String> = BTreeMap::new();
     let mut ns_functions: Option<BTreeMap<String, std::collections::BTreeSet<String>>> = None;
     let mut text = |file: &str| -> String {
@@ -1460,6 +1564,19 @@ pub fn drop_rule_misreads(root: &Path, findings: &mut Vec<crate::model::Finding>
             let Some((_, l)) = line_at(&t, i) else { return Keep };
             if !parent_call.is_match(l) {
                 return Info("a bare word parent (for example parent.isObject()), not a parent:: call; this existing bug is not changed by the upgrade");
+            }
+            return Keep;
+        }
+        if f.rule_id.contains(".RemovedIniDirectives.") && f.rule_id.ends_with("Deprecated") {
+            // PHP raises these deprecations only when the directive is enabled at startup or set;
+            // reading it with ini_get() emits nothing.
+            let Some(name) = ini_directive.captures(&f.message).map(|c| regex::escape(&c[1])) else { return Keep };
+            let t = text(&f.file);
+            let Some((_, l)) = line_at(&t, i) else { return Keep };
+            let get = Regex::new(&format!(r#"(?i)(^|[^a-z0-9_$>:\\])\\?ini_get\s*\(\s*['"]{name}['"]\s*\)"#)).unwrap();
+            let other = Regex::new(&format!(r#"(?i)\b(ini_set|ini_alter|ini_restore)\s*\(\s*['"]{name}['"]"#)).unwrap();
+            if get.is_match(l) && !other.is_match(l) {
+                return Info("ini_get() only reads the setting; PHP reports this deprecation only when the directive is enabled or set, so reading it changes nothing");
             }
             return Keep;
         }

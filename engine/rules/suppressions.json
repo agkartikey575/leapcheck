@@ -102,6 +102,48 @@
     "reason": "method names starting with __ are only discouraged; nothing changes on newer PHP"
   },
   {
+    "rule_id": "PHPCompatibility.FunctionNameRestrictions.ReservedFunctionNames.FunctionDoubleUnderscore",
+    "path_regex": ".*",
+    "message_regex": "^Function name \"[^\"]+\" is discouraged;",
+    "action": "info",
+    "reason": "function names starting with __ are only discouraged; nothing changes on newer PHP"
+  },
+  {
+    "rule_id": "PHPCompatibility.Keywords.ForbiddenNames.resourceFound",
+    "path_regex": ".*",
+    "message_regex": "^'resource' is a soft reserved keyword as of PHP version [0-9.]+ and should not be used",
+    "action": "info",
+    "reason": "resource has been a soft reserved name since PHP 7.0 and naming a class Resource never raises an error, so nothing changes on newer PHP"
+  },
+  {
+    "rule_id": "PHPCompatibility.Keywords.ForbiddenNames.numericFound",
+    "path_regex": ".*",
+    "message_regex": "^'numeric' is a soft reserved keyword as of PHP version [0-9.]+ and should not be used",
+    "action": "info",
+    "reason": "numeric has been a soft reserved name since PHP 7.0 and naming a class Numeric never raises an error, so nothing changes on newer PHP"
+  },
+  {
+    "rule_id": "PHPCompatibility.Keywords.ForbiddenNames.enumFound",
+    "path_regex": ".*",
+    "message_regex": "^'enum' is a soft reserved keyword as of PHP version [0-9.]+ and should not be used",
+    "action": "info",
+    "reason": "since PHP 8.1 enum is a keyword only when another name follows it, so a class named Enum (class Enum extends X) stays valid PHP"
+  },
+  {
+    "rule_id": "PHPCompatibility.FunctionDeclarations.NewParamTypeDeclarations.InvalidLongTypeFound",
+    "path_regex": ".*",
+    "message_regex": "^'integer' is not a valid parameter type declaration",
+    "action": "info",
+    "reason": "the type Integer names a class (for example phpseclib's Integer), which is valid PHP; this is not changed by the upgrade"
+  },
+  {
+    "rule_id": "PHPCompatibility.ParameterValues.NewStripTagsAllowableTagsArray.Invalid",
+    "path_regex": ".*",
+    "message_regex": "^When passing strip_tags\\(\\) the \\$allowed_tags parameter as an array, the tags should not be enclosed",
+    "action": "info",
+    "reason": "tags written with <> brackets in the strip_tags() array form are an existing bug on every PHP version since 7.4, not a deprecation, so the upgrade changes nothing"
+  },
+  {
     "rule_id": "PHPCompatibility.Interfaces.RemovedSerializable.RedundantSerializableImplementation",
     "path_regex": ".*",
     "action": "info",
