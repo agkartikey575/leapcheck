@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "engine_sha": "d074e3843b4a5db1386dda7622c0ac932452d173",
+  "build_sha": "d074e3843b4a5db1386dda7622c0ac932452d173",
+  "generated_at": "2026-11-28T10:34:58Z",
+  "run_id": "46135268168",
+  "mode": "incremental",
+  "mode_reason": "engine unchanged since d074e3843b4a5db1386dda7622c0ac932452d173",
+  "complete": true,
+  "lists": [
+    "lists/top-plugins.json",
+    "lists/top-themes.json"
+  ],
+  "counts": {
+    "list_entries": 5500,
+    "invalid": 0,
+    "unavailable": 22,
+    "unresolved_deferred": 0,
+    "skipped_unchanged": 5368,
+    "planned": 110,
+    "planned_release_zip": 12,
+    "scanned_ok": 109,
+    "scan_failed": 1,
+    "deferred": 0,
+    "plugins": 5000,
+    "themes": 499,
+    "versions": 6712
+  }
+}
